@@ -35,19 +35,10 @@ import os
 from datetime import datetime
 from dash.exceptions import PreventUpdate
 
-# Import MBC algorithms
-from mbc.hiton import learn_mb_mbc
+# Import CB-MBC and minimal utilities
 from mbc.cb_mbc import learn_cb_mbc
-from mbc.tw_mbc import learn_tw_mbc, infer_mpe_enumeration
-from mbc.discriminative import fit_discriminative_mbc, compare_generative_vs_discriminative
-from mbc.tsem import tsem
-from mbc.inference import infer_mpe_graycode, predict_classes, explain_prediction
-from mbc.params import learn_parameters_mle, compute_bic_score, validate_cpts
-
-# For Benjumeda's code integration
-import sys
-import os
-sys.path.append(os.path.join(os.path.dirname(__file__), 'tr_bn'))
+from mbc.inference import predict_classes, explain_prediction
+from mbc.params import compute_bic_score, validate_cpts
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
@@ -58,13 +49,14 @@ print("🚀 MBC DASHBOARD STARTING...")
 print(f"Python: {sys.version}")
 print(f"Dash version: {dash.__version__}")
 
-# Initialize Dash app
+# Initialize Dash app - Simplified for better browser compatibility
 app = dash.Dash(
-    __name__, 
+    __name__,
     external_stylesheets=[
         dbc.themes.BOOTSTRAP,
-        'https://bayes-interpret.com/Model/LearningFromData/MBCDash/assets/liquid-glass.css'
+        'https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css'
     ],
+    assets_folder='/var/www/html/CIGModels/backend/cigmodelsdjango/cigmodelsdjangoapp/mbc-dash/assets',
     requests_pathname_prefix='/Model/LearningFromData/MBCDash/',
     suppress_callback_exceptions=True
 )
@@ -153,7 +145,7 @@ cytoscape_stylesheet = [
     }
 ]
 
-# App layout
+# App layout - Vertical design like MPE Dash
 app.layout = html.Div([
     # Link bar
     html.Div(
@@ -192,12 +184,13 @@ app.layout = html.Div([
 
     html.Div([
         html.P(
-            "Multi-dimensional Bayesian Network Classifiers with bounded treewidth, discriminative learning, and tractable inference.",
-            style={"textAlign": "center", "maxWidth": "800px", "margin": "0 auto", "marginBottom": "20px"}
+            "CB-MBC (3-phase wrapper) for multi-dimensional Bayesian classification.",
+            style={"textAlign": "center", "maxWidth": "800px", "margin": "0 auto", "marginBottom": "30px"}
         )
     ]),
 
     dcc.Store(id='notification-store'),
+    dcc.Store(id='main-content-trigger', data='init'),
 
     # Notification container
     html.Div(id='notification-container', style={
@@ -211,23 +204,23 @@ app.layout = html.Div([
         'opacity': '0'
     }),
 
-    dcc.Tabs(id="main-tabs", value="data-tab", children=[
-        dcc.Tab(label="📊 Data", value="data-tab"),
-        dcc.Tab(label="🧠 Train", value="train-tab"),
-        dcc.Tab(label="🔮 Infer", value="infer-tab"),
-        dcc.Tab(label="⚡ Tractability", value="tractability-tab")
-    ]),
-
-    html.Div(id="tab-content", style={'padding': 20})
+    # Main content container
+    html.Div(id="main-content", style={'padding': 20})
 ])
 
-# Data tab content
-def create_data_tab():
+# Data section - Vertical layout like MPE Dash
+def create_data_section():
     return html.Div([
-        # (1) BIF Upload
+        # (1) Dataset Upload
         html.Div(className="card", children=[
             html.Div([
                 html.H3("1. Load Dataset (.csv)", style={'display': 'inline-block', 'marginRight': '10px', 'textAlign': 'center'}),
+                dbc.Button(
+                    html.I(className="fa fa-question-circle"),
+                    id="help-button-data-upload",
+                    color="link",
+                    style={"display": "inline-block", "verticalAlign": "middle", "padding": "0", "marginLeft": "5px"}
+                ),
             ], style={"textAlign": "center", "position": "relative"}),
 
             html.Div([
@@ -246,9 +239,7 @@ def create_data_tab():
                 ),
             ], className="upload-card"),
 
-            html.Div([
-                html.Div(id='data-upload-status', style={'textAlign': 'center', 'color': 'green'}),
-            ], style={'textAlign': 'center'}),
+            html.Div(id='data-upload-status', style={'textAlign': 'center', 'color': 'green'}),
         ]),
 
         # (2) Variable Configuration
@@ -270,111 +261,49 @@ def create_data_tab():
         ])
     ])
 
-# Train tab content
-def create_train_tab():
+# Algorithm section - Vertical layout like MPE Dash
+def create_algorithm_section():
     return html.Div([
-        # Algorithm Selection
+        # (4) Algorithm
         html.Div(className="card", children=[
             html.Div([
-                html.H3("Algorithm Selection", style={'display': 'inline-block', 'marginRight': '10px', 'textAlign': 'center'}),
+                html.H3("4. Algorithm", style={'display': 'inline-block', 'marginRight': '10px', 'textAlign': 'center'}),
             ], style={"textAlign": "center", "position": "relative"}),
-
-            dcc.Checklist(
-                id='algorithm-selection',
-                options=[
-                    {'label': 'MB-MBC (HITON-PC/MB)', 'value': 'mb_mbc'},
-                    {'label': 'CB-MBC (3-phase wrapper)', 'value': 'cb_mbc'},
-                    {'label': 'TW-MBC (bounded treewidth)', 'value': 'tw_mbc'}
-                ],
-                value=['tw_mbc'],
-                style={'marginBottom': 20, 'textAlign': 'center'}
-            ),
+            html.Div("Using CB-MBC (3-phase wrapper)", style={'textAlign': 'center', 'marginBottom': 20})
         ]),
 
-        # Global Parameters
+        # (5) Parameters (CB-MBC only)
         html.Div(className="card", children=[
             html.Div([
-                html.H3("Global Parameters", style={'display': 'inline-block', 'marginRight': '10px', 'textAlign': 'center'}),
+                html.H3("5. CB-MBC Parameters", style={'display': 'inline-block', 'marginRight': '10px', 'textAlign': 'center'}),
             ], style={"textAlign": "center", "position": "relative"}),
 
             html.Div([
-                html.Label("Significance Level (α):"),
-                dcc.Slider(id='alpha-slider', min=0.01, max=0.2, step=0.01, value=0.05,
-                          marks={0.01: '0.01', 0.05: '0.05', 0.1: '0.1', 0.2: '0.2'}),
+                html.Label("Max Iterations Phase II (T):"),
+                dcc.Slider(id='cb-max-iter-slider', min=5, max=50, step=5, value=10,
+                          marks={5: '5', 10: '10', 20: '20', 50: '50'}),
 
-                html.Label("Max Conditioning Set Size (maxCS):"),
-                dcc.Slider(id='maxcs-slider', min=1, max=5, step=1, value=3,
-                          marks={1: '1', 2: '2', 3: '3', 4: '4', 5: '5'}),
-
-                html.Label("Max Parents per Node (k):"),
-                dcc.Slider(id='max-parents-slider', min=1, max=10, step=1, value=5,
-                          marks={1: '1', 3: '3', 5: '5', 7: '7', 10: '10'})
+                html.Label("Evaluation Metric:"),
+                dcc.Dropdown(
+                    id='cb-metric-dropdown',
+                    options=[
+                        {'label': 'Global Accuracy', 'value': 'global'},
+                        {'label': 'Mean-Hamming Distance', 'value': 'hamming'}
+                    ],
+                    value='global'
+                )
             ], style={'marginBottom': 20})
         ]),
 
-        # Algorithm-Specific Parameters
-        html.Div(className="card", children=[
-            html.Div([
-                html.H3("Algorithm-Specific Parameters", style={'display': 'inline-block', 'marginRight': '10px', 'textAlign': 'center'}),
-            ], style={"textAlign": "center", "position": "relative"}),
+        # (6) Advanced options (removed for CB-only)
+        html.Div(),
 
-            html.Div([
-                # TW-MBC parameters
-                html.Div(id='tw-mbc-params', children=[
-                    html.H5("TW-MBC Parameters"),
-                    html.Label("Max Treewidth (tw_max):"),
-                    dcc.Slider(id='tw-max-slider', min=1, max=10, step=1, value=3,
-                              marks={1: '1', 3: '3', 5: '5', 7: '7', 10: '10'}),
-
-                    html.Label("Elimination Order Heuristic:"),
-                    dcc.Dropdown(
-                        id='eo-method-dropdown',
-                        options=[
-                            {'label': 'MCS (Maximum Cardinality Search)', 'value': 'MCS'},
-                            {'label': 'LEX (Lexicographic BFS)', 'value': 'LEX'},
-                            {'label': 'MMD (Minimum Degree)', 'value': 'MMD'}
-                        ],
-                        value='MCS'
-                    )
-                ], style={'marginBottom': 20}),
-
-                # CB-MBC parameters
-                html.Div(id='cb-mbc-params', children=[
-                    html.H5("CB-MBC Parameters"),
-                    html.Label("Max Iterations Phase II (T):"),
-                    dcc.Slider(id='cb-max-iter-slider', min=5, max=50, step=5, value=10,
-                              marks={5: '5', 10: '10', 20: '20', 50: '50'}),
-
-                    html.Label("Evaluation Metric:"),
-                    dcc.Dropdown(
-                        id='cb-metric-dropdown',
-                        options=[
-                            {'label': 'Global Accuracy', 'value': 'global'},
-                            {'label': 'Mean-Hamming Distance', 'value': 'hamming'}
-                        ],
-                        value='global'
-                    )
-                ], style={'marginBottom': 20}),
-
-                # Advanced options
-                html.H5("Advanced Options"),
-                dcc.Checklist(
-                    id='advanced-options',
-                    options=[
-                        {'label': 'Discriminative Learning (CLL)', 'value': 'discriminative'},
-                        {'label': 'Handle Missing Data (TSEM)', 'value': 'tsem'}
-                    ],
-                    value=[]
-                )
-            ])
-        ]),
-
-        # Train button
+        # (7) Train Models
         html.Div([
             dbc.Button(
                 [
                     html.I(className="fas fa-play-circle me-2"),
-                    "Train Models"
+                    "Train CB-MBC"
                 ],
                 id='train-button',
                 n_clicks=0,
@@ -399,13 +328,13 @@ def create_train_tab():
         html.Div(id='training-results', style={'marginTop': 20})
     ])
 
-# Infer tab content
-def create_infer_tab():
+# Inference section - Vertical layout like MPE Dash
+def create_inference_section():
     return html.Div([
-        # Model Selection
+        # (8) Model Selection
         html.Div(className="card", children=[
             html.Div([
-                html.H3("Model Selection", style={'display': 'inline-block', 'marginRight': '10px', 'textAlign': 'center'}),
+                html.H3("8. Model Selection", style={'display': 'inline-block', 'marginRight': '10px', 'textAlign': 'center'}),
             ], style={"textAlign": "center", "position": "relative"}),
 
             dcc.Dropdown(
@@ -415,10 +344,10 @@ def create_infer_tab():
             ),
         ]),
 
-        # Evidence Input
+        # (9) Evidence Input
         html.Div(className="card", children=[
             html.Div([
-                html.H3("Evidence Input", style={'display': 'inline-block', 'marginRight': '10px', 'textAlign': 'center'}),
+                html.H3("9. Evidence Input", style={'display': 'inline-block', 'marginRight': '10px', 'textAlign': 'center'}),
             ], style={"textAlign": "center", "position": "relative"}),
 
             html.Div(id='evidence-input'),
@@ -449,35 +378,30 @@ def create_infer_tab():
             ], style={'textAlign': 'center'}),
         ]),
 
-        # Results
-        html.Div([
+        # (10) Results
+        html.Div(className="card", children=[
             html.Div([
-                html.Div(className="card", children=[
-                    html.Div([
-                        html.H4("Prediction Results", style={'display': 'inline-block', 'marginRight': '10px', 'textAlign': 'center'}),
-                    ], style={"textAlign": "center", "position": "relative"}),
-                    html.Div(id='prediction-results')
-                ])
-            ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top'}),
+                html.H4("Prediction Results", style={'display': 'inline-block', 'marginRight': '10px', 'textAlign': 'center'}),
+            ], style={"textAlign": "center", "position": "relative"}),
+            html.Div(id='prediction-results')
+        ]),
 
+        # (11) Explanation
+        html.Div(className="card", children=[
             html.Div([
-                html.Div(className="card", children=[
-                    html.Div([
-                        html.H4("Explanation", style={'display': 'inline-block', 'marginRight': '10px', 'textAlign': 'center'}),
-                    ], style={"textAlign": "center", "position": "relative"}),
-                    html.Div(id='prediction-explanation')
-                ])
-            ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top', 'marginLeft': '4%'})
+                html.H4("Explanation", style={'display': 'inline-block', 'marginRight': '10px', 'textAlign': 'center'}),
+            ], style={"textAlign": "center", "position": "relative"}),
+            html.Div(id='prediction-explanation')
         ])
     ])
 
-# Tractability tab content
-def create_tractability_tab():
+# Tractability section - Vertical layout like MPE Dash
+def create_tractability_section():
     return html.Div([
-        # Visualization
+        # (12) Structure Visualization
         html.Div(className="card", children=[
             html.Div([
-                html.H3("Model Structure Visualization", style={'display': 'inline-block', 'marginRight': '10px', 'textAlign': 'center'}),
+                html.H3("12. Model Structure Visualization", style={'display': 'inline-block', 'marginRight': '10px', 'textAlign': 'center'}),
             ], style={"textAlign": "center", "position": "relative"}),
 
             cyto.Cytoscape(
@@ -489,40 +413,52 @@ def create_tractability_tab():
             )
         ]),
 
-        # Metrics
-        html.Div([
+        # (13) Tractability Metrics
+        html.Div(className="card", children=[
             html.Div([
-                html.Div(className="card", children=[
-                    html.Div([
-                        html.H4("Tractability Metrics", style={'display': 'inline-block', 'marginRight': '10px', 'textAlign': 'center'}),
-                    ], style={"textAlign": "center", "position": "relative"}),
-                    html.Div(id='tractability-metrics')
-                ])
-            ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top'}),
+                html.H4("Tractability Metrics", style={'display': 'inline-block', 'marginRight': '10px', 'textAlign': 'center'}),
+            ], style={"textAlign": "center", "position": "relative"}),
+            html.Div(id='tractability-metrics')
+        ]),
 
+        # (14) Complexity Analysis
+        html.Div(className="card", children=[
             html.Div([
-                html.Div(className="card", children=[
-                    html.Div([
-                        html.H4("Complexity Analysis", style={'display': 'inline-block', 'marginRight': '10px', 'textAlign': 'center'}),
-                    ], style={"textAlign": "center", "position": "relative"}),
-                    html.Div(id='complexity-analysis')
-                ])
-            ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top', 'marginLeft': '4%'})
+                html.H4("Complexity Analysis", style={'display': 'inline-block', 'marginRight': '10px', 'textAlign': 'center'}),
+            ], style={"textAlign": "center", "position": "relative"}),
+            html.Div(id='complexity-analysis')
         ])
     ])
 
-# Callback for tab content
-@app.callback(Output('tab-content', 'children'),
-              Input('main-tabs', 'value'))
-def render_tab_content(active_tab):
-    if active_tab == 'data-tab':
-        return create_data_tab()
-    elif active_tab == 'train-tab':
-        return create_train_tab()
-    elif active_tab == 'infer-tab':
-        return create_infer_tab()
-    elif active_tab == 'tractability-tab':
-        return create_tractability_tab()
+# Main content callback - Vertical layout like MPE Dash
+@app.callback(Output('main-content', 'children'),
+              Input('main-content-trigger', 'data'),
+              prevent_initial_call=False)
+def render_main_content(trigger_data):
+    """Render all content vertically like MPE Dash"""
+    logger.info(f"Rendering main content, trigger: {trigger_data}")
+
+    try:
+        # Return full content with all sections
+        return html.Div([
+            # Data section
+            create_data_section(),
+
+            # Algorithm section
+            create_algorithm_section(),
+
+            # Inference section
+            create_inference_section(),
+
+            # Tractability section
+            create_tractability_section()
+        ], style={'padding': '20px', 'maxWidth': '1200px', 'margin': '0 auto'})
+    except Exception as e:
+        logger.error(f"Error rendering main content: {e}")
+        return html.Div([
+            html.H2("❌ Error Loading MBC Dashboard", style={'textAlign': 'center', 'color': 'red'}),
+            html.P(f"Error: {str(e)}", style={'textAlign': 'center', 'color': 'red'})
+        ], style={'padding': '40px'})
 
 # Data upload callback
 @app.callback([Output('data-upload-status', 'children'),
@@ -627,17 +563,9 @@ def confirm_variable_selection(n_clicks, class_vars, feature_vars):
 @app.callback([Output('training-status', 'children'),
                Output('training-results', 'children')],
               Input('train-button', 'n_clicks'),
-              [State('algorithm-selection', 'value'),
-               State('alpha-slider', 'value'),
-               State('maxcs-slider', 'value'),
-               State('max-parents-slider', 'value'),
-               State('tw-max-slider', 'value'),
-               State('eo-method-dropdown', 'value'),
-               State('cb-max-iter-slider', 'value'),
-               State('cb-metric-dropdown', 'value'),
-               State('advanced-options', 'value')])
-def train_models(n_clicks, algorithms, alpha, maxcs, max_parents, tw_max, eo_method,
-                cb_max_iter, cb_metric, advanced_options):
+              [State('cb-max-iter-slider', 'value'),
+               State('cb-metric-dropdown', 'value')])
+def train_models(n_clicks, cb_max_iter, cb_metric):
     if n_clicks == 0 or app_data['df'] is None:
         return "", ""
     
@@ -654,66 +582,45 @@ def train_models(n_clicks, algorithms, alpha, maxcs, max_parents, tw_max, eo_met
         app_data['models'] = {}
         app_data['training_results'] = {}
         
-        # Train selected algorithms
-        for algorithm in algorithms:
-            status_updates.append(f"🔄 Training {algorithm.upper()}...")
-            
-            start_time = datetime.now()
-            
-            if algorithm == 'mb_mbc':
-                model = learn_mb_mbc(df, class_vars, feature_vars, 
-                                   alpha=alpha, max_cond_size=maxcs, max_parents=max_parents)
-                app_data['models']['MB-MBC'] = model
-                
-            elif algorithm == 'cb_mbc':
-                model = learn_cb_mbc(df, class_vars, feature_vars, 
-                                   metric=cb_metric, max_iterations=cb_max_iter)
-                app_data['models']['CB-MBC'] = model
-                
-            elif algorithm == 'tw_mbc':
-                model = learn_tw_mbc(df, class_vars, feature_vars, 
-                                   tw_max=tw_max, eo_method=eo_method, k_max=max_parents, alpha=alpha)
-                app_data['models']['TW-MBC'] = model
-                
-                # Apply discriminative learning if selected
-                if 'discriminative' in advanced_options:
-                    status_updates.append("🔄 Applying discriminative learning...")
-                    model = fit_discriminative_mbc(df, model, class_vars, feature_vars)
-                    app_data['models']['TW-MBC (Discriminative)'] = model
-            
-            training_time = (datetime.now() - start_time).total_seconds()
-            
-            # Evaluate model
-            if hasattr(model, 'cpts') and model.cpts:
-                bic_score = compute_bic_score(df, model.cpts, model.G if hasattr(model, 'G') else None)
-                validation = validate_cpts(model.cpts)
-            else:
-                bic_score = 0.0
-                validation = {'valid': False, 'errors': ['No parameters learned']}
-            
-            # Get structure info
-            if hasattr(model, 'get_structure_info'):
-                struct_info = model.get_structure_info()
-            elif hasattr(model, 'G'):
-                struct_info = {'total_edges': model.G.number_of_edges()}
-            else:
-                struct_info = {'total_edges': 0}
-            
-            # Get tractability info
-            if hasattr(model, 'get_treewidth_info'):
-                tw_info = model.get_treewidth_info()
-            else:
-                tw_info = {'treewidth_estimate': 'Unknown', 'tractable': False}
-            
-            app_data['training_results'][algorithm] = {
+        # Train CB-MBC only
+        status_updates.append("🔄 Training CB-MBC...")
+        start_time = datetime.now()
+        model = learn_cb_mbc(df, class_vars, feature_vars, metric=cb_metric, max_iterations=cb_max_iter)
+        app_data['models'] = {'CB-MBC': model}
+        training_time = (datetime.now() - start_time).total_seconds()
+
+        # Evaluate model
+        if hasattr(model, 'cpts') and model.cpts:
+            graph = model.get_graph() if hasattr(model, 'get_graph') else (model.G if hasattr(model, 'G') else None)
+            bic_score = compute_bic_score(df, model.cpts, graph) if graph is not None else 0.0
+            validation = validate_cpts(model.cpts)
+        else:
+            bic_score = 0.0
+            validation = {'valid': False, 'errors': ['No parameters learned']}
+
+        # Structure info
+        if hasattr(model, 'get_structure_info'):
+            struct_info = model.get_structure_info()
+        elif hasattr(model, 'get_graph'):
+            struct_info = {'total_edges': model.get_graph().number_of_edges()}
+        elif hasattr(model, 'G'):
+            struct_info = {'total_edges': model.G.number_of_edges()}
+        else:
+            struct_info = {'total_edges': 0}
+
+        tw_info = {'treewidth_estimate': 'Unknown', 'tractable': False}
+
+        app_data['training_results'] = {
+            'cb_mbc': {
                 'training_time': training_time,
                 'bic_score': bic_score,
                 'structure_info': struct_info,
                 'treewidth_info': tw_info,
                 'validation': validation
             }
-            
-            status_updates.append(f"✅ {algorithm.upper()} completed in {training_time:.2f}s")
+        }
+
+        status_updates.append(f"✅ CB-MBC completed in {training_time:.2f}s")
         
         # Handle TSEM if selected
         if 'tsem' in advanced_options and df.isnull().sum().sum() > 0:
