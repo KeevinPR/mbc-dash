@@ -8,7 +8,11 @@ Main Dash Application for Multi-dimensional Classification with MBCs
 
 """
 
+import sys
+import logging
 import dash
+import dash_bootstrap_components as dbc
+from dash import html, dcc
 
 
 
@@ -38,6 +42,14 @@ print("✅ MBC DASHBOARD STARTED")
 
 # Expose server for gunicorn
 server = app.server
+
+# Minimal layout to satisfy Dash requirements
+app.layout = html.Div(
+    [
+        html.H1("MBC-Dash"),
+        html.P("Dashboard is up. Minimal layout loaded."),
+    ]
+)
 
 if __name__ == '__main__':
     app.run_server(debug=True, host='0.0.0.0', port=8058)
