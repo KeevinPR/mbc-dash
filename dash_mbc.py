@@ -693,9 +693,7 @@ def visualize_network(network_data):
     # Create the visualization card
     network_card = dbc.Card([
         dbc.CardHeader([
-            html.H4("🔗 Learned Network Structure", className="mb-0"),
-            html.Small(" (CIG Corporate Style)", 
-                      className="text-muted ms-2")
+            html.H4("🔗 Learned Network Structure", className="mb-0")
         ]),
         dbc.CardBody([
             cyto.Cytoscape(
@@ -726,8 +724,8 @@ def visualize_network(network_data):
                 html.Div([
                     html.Span("💡 ", style={'fontSize': '16px'}),
                     html.B("Legend: "),
-                    html.Span("● Class nodes (CIG blue)", style={'marginRight': '15px', 'color': '#00A2E1', 'fontWeight': 'bold'}),
-                    html.Span("▢ Feature nodes (light blue)", style={'marginRight': '15px', 'color': '#90CAF9'}),
+                    html.Span("● Class nodes", style={'marginRight': '15px', 'color': '#00A2E1', 'fontWeight': 'bold'}),
+                    html.Span("▢ Feature nodes", style={'marginRight': '15px', 'color': '#90CAF9'}),
                     html.Span("→ Class→Feature (highlighted)", style={'color': '#00A2E1'})
                 ], style={'textAlign': 'center', 'fontSize': '14px'}),
                 html.Div([
