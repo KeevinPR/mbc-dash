@@ -12,6 +12,7 @@ from dash import html, dcc
 from dash import Input, Output, State, ALL
 from dash.exceptions import PreventUpdate
 import pandas as pd
+import dash_cytoscape as cyto
 
 # R interface setup
 from rpy2 import robjects as ro
@@ -47,6 +48,73 @@ app = dash.Dash(
 )
 server = app.server
 
+# Cytoscape stylesheet for network visualization
+cytoscape_stylesheet = [
+    {
+        'selector': 'node',
+        'style': {
+            'content': 'data(label)',
+            'text-valign': 'center',
+            'text-halign': 'center',
+            'background-color': '#BFD7B5',
+            'border-color': '#A3C4BC',
+            'border-width': 2,
+            'width': 50,
+            'height': 50,
+            'font-size': 11
+        }
+    },
+    {
+        'selector': 'node[type="class"]',
+        'style': {
+            'background-color': '#FF6B6B',
+            'border-color': '#FF5252',
+            'shape': 'ellipse'
+        }
+    },
+    {
+        'selector': 'node[type="feature"]',
+        'style': {
+            'background-color': '#4ECDC4',
+            'border-color': '#26A69A',
+            'shape': 'rectangle'
+        }
+    },
+    {
+        'selector': 'edge',
+        'style': {
+            'curve-style': 'bezier',
+            'target-arrow-shape': 'triangle',
+            'target-arrow-color': '#666',
+            'line-color': '#666',
+            'width': 2
+        }
+    },
+    {
+        'selector': 'edge[type="class"]',
+        'style': {
+            'line-color': '#FF6B6B',
+            'target-arrow-color': '#FF6B6B',
+            'width': 2.5
+        }
+    },
+    {
+        'selector': 'edge[type="bridge"]',
+        'style': {
+            'line-color': '#FFA726',
+            'target-arrow-color': '#FFA726',
+            'width': 3
+        }
+    },
+    {
+        'selector': 'edge[type="feature"]',
+        'style': {
+            'line-color': '#4ECDC4',
+            'target-arrow-color': '#4ECDC4'
+        }
+    }
+]
+
 # Helper: Ensure R environment is ready and source the MBC R script
 def ensure_r_ready():
     try:
@@ -75,6 +143,7 @@ app.layout = html.Div([
     dcc.Store(id='mbc-columns-store'),
     dcc.Store(id='mbc-classes-selected', data=[]),
     dcc.Store(id='mbc-features-selected', data=[]),
+    dcc.Store(id='mbc-network-store'),  # Store network structure
     dcc.Store(id='notification-store'),
 
     dcc.Loading(
@@ -194,6 +263,10 @@ app.layout = html.Div([
                            style={'margin': '1rem 0', 'backgroundColor': '#00A2E1', 'color': 'white'}),
             ]),
 
+            # 5. Network Visualization
+            html.Div(id='mbc-network-container', style={'marginTop': '20px'}),
+
+            # 6. Performance Results
             html.Div(id='mbc-results', style={'textAlign': 'center', 'marginBottom': '2rem'}),
         ])
     ),
@@ -363,6 +436,7 @@ def toggle_help_features(n, is_open):
 # 5. Run MBC model training and evaluation
 @app.callback(
     Output('mbc-results', 'children'),
+    Output('mbc-network-store', 'data'),
     Output('notification-store', 'data'),
     Input('mbc-run-button', 'n_clicks'),
     State('mbc-dataset-store', 'data'),
@@ -379,25 +453,25 @@ def run_mbc(n_clicks, dataset_store, classes, features, approach, measure, train
         raise PreventUpdate
     # Validate selections
     if not dataset_store:
-        return html.Div("No dataset loaded.", style={'color': 'red'}), {"message": "Please upload a dataset first.", "header": "Error"}
+        return html.Div("No dataset loaded.", style={'color': 'red'}), None, {"message": "Please upload a dataset first.", "header": "Error"}
     if not classes:
-        return html.Div("Please select at least one class variable.", style={'color': 'red'}), {"message": "No class variables selected.", "header": "Error"}
+        return html.Div("Please select at least one class variable.", style={'color': 'red'}), None, {"message": "No class variables selected.", "header": "Error"}
     if not features:
-        return html.Div("Please select at least one feature variable.", style={'color': 'red'}), {"message": "No feature variables selected.", "header": "Error"}
+        return html.Div("Please select at least one feature variable.", style={'color': 'red'}), None, {"message": "No feature variables selected.", "header": "Error"}
     if set(classes) & set(features):
-        return html.Div("A column cannot be both class and feature.", style={'color': 'red'}), {"message": "Classes and features must be distinct.", "header": "Error"}
+        return html.Div("A column cannot be both class and feature.", style={'color': 'red'}), None, {"message": "Classes and features must be distinct.", "header": "Error"}
 
     # Convert stored dataset back to DataFrame
     try:
         df_all = pd.DataFrame.from_records(dataset_store['records'], columns=dataset_store['columns'])
     except Exception as e:
-        return html.Div(f"Error reading dataset: {e}", style={'color': 'red'}), {"message": str(e), "header": "Dataset Error"}
+        return html.Div(f"Error reading dataset: {e}", style={'color': 'red'}), None, {"message": str(e), "header": "Dataset Error"}
 
     # Prepare R environment and source MBC functions
     try:
         ensure_r_ready()
     except Exception as e:
-        return html.Div(str(e), style={'color': 'red'}), {"message": str(e), "header": "R Environment Error"}
+        return html.Div(str(e), style={'color': 'red'}), None, {"message": str(e), "header": "R Environment Error"}
 
     # Convert all string columns to categorical in pandas first (before R conversion)
     for col in df_all.columns:
@@ -475,7 +549,7 @@ def run_mbc(n_clicks, dataset_store, classes, features, approach, measure, train
             ro.globalenv['measure'] = measure
             ro.r('MBC_model <- learn_MBC_wrapper2(train_df, val_df, classes, features, measure = measure, verbose = FALSE)')
     except Exception as e:
-        return html.Div(f"Error during MBC training: {e}", style={'color': 'red'}), {"message": str(e), "header": "Training Error"}
+        return html.Div(f"Error during MBC training: {e}", style={'color': 'red'}), None, {"message": str(e), "header": "Training Error"}
 
     # Get the learned network structure (arc list)
     try:
@@ -483,11 +557,23 @@ def run_mbc(n_clicks, dataset_store, classes, features, approach, measure, train
             arcs_df = pandas_converter.rpy2py(ro.r('as.data.frame(arcs(MBC_model))'))
         if arcs_df.empty:
             structure_str = "(No arcs in the learned network.)"
+            network_data = {'arcs': [], 'classes': classes, 'features': features}
         else:
             arc_list = [f"{row['from']} -> {row['to']}" for _, row in arcs_df.iterrows()]
             structure_str = "Learned MBC structure (arcs):\n" + "\n".join(arc_list)
+            # Store network data for visualization
+            network_data = {
+                'arcs': arcs_df.to_dict('records'),
+                'classes': classes,
+                'features': features
+            }
     except Exception as e:
-        structure_str = "(Could not retrieve network structure)"
+        logger.error(f"Error retrieving network structure: {e}")
+        logger.error(f"Exception type: {type(e).__name__}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        structure_str = f"(Could not retrieve network structure: {str(e)})"
+        network_data = None
 
     # Make predictions on validation set
     try:
@@ -497,7 +583,7 @@ def run_mbc(n_clicks, dataset_store, classes, features, approach, measure, train
         avg_acc = float(perf.rx2('average')[0])
         per_class_acc = list(perf.rx2('per_class'))
     except Exception as e:
-        return html.Div(f"Error during prediction/evaluation: {e}", style={'color': 'red'}), {"message": str(e), "header": "Prediction Error"}
+        return html.Div(f"Error during prediction/evaluation: {e}", style={'color': 'red'}), None, {"message": str(e), "header": "Prediction Error"}
 
     # Build results card
     per_class_rows = [
@@ -517,7 +603,113 @@ def run_mbc(n_clicks, dataset_store, classes, features, approach, measure, train
             bordered=True, size="sm", style={'width': '60%', 'margin': '0 auto'}
         ),
     ]), className="mt-3")
-    return results_card, None
+    return results_card, network_data, None
+
+# 6. Visualize learned network structure
+@app.callback(
+    Output('mbc-network-container', 'children'),
+    Input('mbc-network-store', 'data'),
+    prevent_initial_call=True
+)
+def visualize_network(network_data):
+    """Create interactive network visualization using Cytoscape"""
+    if not network_data:
+        return html.Div()
+    
+    classes = network_data.get('classes', [])
+    features = network_data.get('features', [])
+    arcs = network_data.get('arcs', [])
+    
+    # Build Cytoscape elements
+    elements = []
+    
+    # Add nodes - Classes
+    for cls in classes:
+        elements.append({
+            'data': {
+                'id': cls,
+                'label': cls,
+                'type': 'class'
+            }
+        })
+    
+    # Add nodes - Features
+    for feat in features:
+        elements.append({
+            'data': {
+                'id': feat,
+                'label': feat,
+                'type': 'feature'
+            }
+        })
+    
+    # Add edges with type classification
+    for arc in arcs:
+        from_node = arc['from']
+        to_node = arc['to']
+        
+        # Determine edge type
+        if from_node in classes and to_node in classes:
+            edge_type = 'class'  # Class-to-class edge
+        elif from_node in classes and to_node in features:
+            edge_type = 'bridge'  # Class-to-feature edge
+        else:
+            edge_type = 'feature'  # Feature-to-feature edge
+        
+        elements.append({
+            'data': {
+                'id': f"{from_node}-{to_node}",
+                'source': from_node,
+                'target': to_node,
+                'type': edge_type
+            }
+        })
+    
+    # Create the visualization card
+    network_card = dbc.Card([
+        dbc.CardHeader([
+            html.H4("🔗 Learned Network Structure", className="mb-0"),
+            html.Small(" (Red circles = Classes, Blue rectangles = Features)", 
+                      className="text-muted ms-2")
+        ]),
+        dbc.CardBody([
+            cyto.Cytoscape(
+                id='mbc-network-graph',
+                elements=elements,
+                stylesheet=cytoscape_stylesheet,
+                style={
+                    'width': '100%',
+                    'height': '500px',
+                    'border': '1px solid #ddd',
+                    'borderRadius': '5px'
+                },
+                layout={
+                    'name': 'cose',  # Force-directed layout
+                    'animate': True,
+                    'animationDuration': 500,
+                    'nodeRepulsion': 8000,
+                    'idealEdgeLength': 100,
+                    'edgeElasticity': 100,
+                    'nestingFactor': 5,
+                    'gravity': 80,
+                    'numIter': 1000,
+                    'randomize': False
+                }
+            ),
+            html.Div([
+                html.Hr(),
+                html.Div([
+                    html.Span("💡 ", style={'fontSize': '16px'}),
+                    html.B("Legend: "),
+                    html.Span("🔴 Class nodes", style={'marginRight': '15px', 'color': '#FF6B6B'}),
+                    html.Span("🔷 Feature nodes", style={'marginRight': '15px', 'color': '#4ECDC4'}),
+                    html.Span("🟠 Class→Feature edges", style={'color': '#FFA726'})
+                ], style={'textAlign': 'center', 'fontSize': '14px'})
+            ])
+        ])
+    ], className="mt-3")
+    
+    return network_card
 
 # Run the app
 if __name__ == '__main__':
