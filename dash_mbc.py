@@ -41,10 +41,12 @@ R_SRC_PATH = os.path.join(current_dir, "mbc.R")  # Path to the R script with MBC
 # Initialize Dash app
 app = dash.Dash(
     __name__,
-    external_stylesheets=[dbc.themes.BOOTSTRAP],
+    external_stylesheets=[
+        dbc.themes.BOOTSTRAP,
+        'https://bayes-interpret.com/Evidence/ProbExplainerDash/assets/liquid-glass.css'  # Apple Liquid Glass CSS
+    ],
     requests_pathname_prefix='/Model/LearningFromData/MBCDash/',
-    suppress_callback_exceptions=True,
-    title="MBC-Dash: Multi-dimensional Bayesian Classifier",
+    suppress_callback_exceptions=True
 )
 server = app.server
 
@@ -158,34 +160,127 @@ app.layout = html.Div([
     dcc.Store(id='mbc-features-selected', data=[]),
     dcc.Store(id='mbc-network-store'),  # Store network structure
     dcc.Store(id='notification-store'),
+    
+    # Notification container
+    html.Div(id='notification-container', style={
+        'position': 'fixed',
+        'bottom': '20px',
+        'right': '20px',
+        'zIndex': '1000',
+        'width': '300px',
+        'transition': 'all 0.3s ease-in-out',
+        'transform': 'translateY(100%)',
+        'opacity': '0'
+    }),
 
     dcc.Loading(
-        id="global-spinner", type="default", color="#00A2E1",
+        id="global-spinner", 
+        type="default", 
+        fullscreen=False,
+        color="#00A2E1",
+        style={
+            "position": "fixed",
+            "top": "50%",
+            "left": "50%",
+            "transform": "translate(-50%, -50%)",
+            "zIndex": "999999"
+        },
         children=html.Div([
-            # 1. Upload Dataset
+            html.H1("Multi-dimensional Bayesian Classifier ", style={'textAlign': 'center'}),
+
+            ########################################################
+            # Info text
+            ########################################################
+            html.Div(
+                className="link-bar",
+                style={
+                    "textAlign": "center",
+                    "marginBottom": "20px"
+                },
+                children=[
+                    html.A(
+                        children=[
+                            html.Img(
+                                src="https://cig.fi.upm.es/wp-content/uploads/github.png",
+                                style={"height": "24px", "marginRight": "8px"}
+                            ),
+                            "GitHub Repository"
+                        ],
+                        href="https://github.com/ptorrijos99/BayesFL",
+                        target="_blank",
+                        className="btn btn-outline-info me-2"
+                    ),
+                    html.A(
+                        children=[
+                            html.Img(
+                                src="https://cig.fi.upm.es/wp-content/uploads/2023/11/cropped-logo_CIG.png",
+                                style={"height": "24px", "marginRight": "8px"}
+                            ),
+                            "Research Paper"
+                        ],
+                        href="https://cig.fi.upm.es/publications/",
+                        target="_blank",
+                        className="btn btn-outline-primary me-2"
+                    ),
+                ]
+            ),
+            ########################################################
+            # Short explanatory text
+            ########################################################
+            html.Div(
+                [
+                    html.P(
+                        "Multi-dimensional Bayesian Classifiers (MBC) extend traditional Bayesian networks "
+                        "to predict multiple class variables simultaneously. Upload your dataset, select "
+                        "class and feature variables, and train an MBC model to see the learned structure "
+                        "and performance metrics.",
+                        style={"textAlign": "center", "maxWidth": "800px", "margin": "0 auto"}
+                    )
+                ],
+                style={"marginBottom": "20px"}
+            ),
+
+            ########################################################
+            # (A) Data upload
+            ########################################################
             html.Div(className="card", children=[
-                html.H3("MBC — 1. Upload Dataset (CSV)", style={'textAlign': 'center'}),
+                html.H3("1. Upload Dataset (CSV)", style={'textAlign': 'center'}),
+
+                # Container "card"
                 html.Div([
+                    # Top part with icon and text
                     html.Div([
-                        html.Img(src="https://img.icons8.com/ios-glyphs/40/upload.png", className="upload-icon"),
-                        html.Div("Drag and drop or select a CSV file", className="upload-text"),
+                        html.Img(
+                            src="https://img.icons8.com/ios-glyphs/40/cloud--v1.png",
+                            className="upload-icon"
+                        ),
+                        html.Div("Drag and drop or select a CSV file", className="upload-text")
                     ]),
-                    dcc.Upload(id='mbc-upload-csv',
+                    
+                    # Upload component
+                    dcc.Upload(
+                        id='mbc-upload-csv',
                         children=html.Div([], style={'display': 'none'}),
                         className="upload-dropzone",
-                        multiple=False),
-                    html.Div(id='mbc-upload-status',
-                        style={'textAlign': 'center', 'marginTop': '10px', 'color': '#6c757d'}),
+                        multiple=False
+                    ),
                 ], className="upload-card"),
+
+                # Upload status
+                html.Div(id='mbc-upload-status', style={'textAlign': 'center', 'color': 'green'}),
             ]),
 
             # 2. Select Classes
             html.Div(className="card", children=[
                 html.Div([
-                    html.H3("MBC — 2. Select Classes", style={'display': 'inline-block', 'marginRight': '5px'}),
-                    dbc.Button(html.I(className="fa fa-question-circle"), id="help-button-mbc-classes",
-                               color="link", style={"verticalAlign": "middle", "padding": "0"}),
-                ], style={"textAlign": "center"}),
+                    html.H3("2. Select Classes", style={'display': 'inline-block', 'marginRight': '10px', 'textAlign': 'center'}),
+                    dbc.Button(
+                        html.I(className="fa fa-question-circle"), 
+                        id="help-button-mbc-classes",
+                        color="link", 
+                        style={"display": "inline-block", "verticalAlign": "middle", "padding": "0", "marginLeft": "5px"}
+                    ),
+                ], style={"textAlign": "center", "position": "relative"}),
                 html.Div([
                     dbc.Button("Select All", id="mbc-select-all-classes", color="outline-primary", size="sm", style={'marginRight': '10px'}),
                     dbc.Button("Clear All", id="mbc-clear-classes", color="outline-secondary", size="sm"),
@@ -200,10 +295,14 @@ app.layout = html.Div([
             # 3. Select Features
             html.Div(className="card", children=[
                 html.Div([
-                    html.H3("MBC — 3. Select Features", style={'display': 'inline-block', 'marginRight': '5px'}),
-                    dbc.Button(html.I(className="fa fa-question-circle"), id="help-button-mbc-features",
-                               color="link", style={"verticalAlign": "middle", "padding": "0"}),
-                ], style={"textAlign": "center"}),
+                    html.H3("3. Select Features", style={'display': 'inline-block', 'marginRight': '10px', 'textAlign': 'center'}),
+                    dbc.Button(
+                        html.I(className="fa fa-question-circle"), 
+                        id="help-button-mbc-features",
+                        color="link", 
+                        style={"display": "inline-block", "verticalAlign": "middle", "padding": "0", "marginLeft": "5px"}
+                    ),
+                ], style={"textAlign": "center", "position": "relative"}),
                 html.Div([
                     dbc.Button("Select All", id="mbc-select-all-features", color="outline-primary", size="sm", style={'marginRight': '10px'}),
                     dbc.Button("Clear All", id="mbc-clear-features", color="outline-secondary", size="sm"),
@@ -221,7 +320,15 @@ app.layout = html.Div([
 
             # 4. Options (Approach and others)
             html.Div(className="card", children=[
-                html.H3("MBC — 4. Options", style={'textAlign': 'center'}),
+                html.Div([
+                    html.H3("4. Algorithm Options", style={'display': 'inline-block', 'marginRight': '10px', 'textAlign': 'center'}),
+                    dbc.Button(
+                        html.I(className="fa fa-question-circle"), 
+                        id="help-button-mbc-options",
+                        color="link", 
+                        style={"display": "inline-block", "verticalAlign": "middle", "padding": "0", "marginLeft": "5px"}
+                    ),
+                ], style={"textAlign": "center", "position": "relative"}),
                 dbc.Row([
                     dbc.Col([
                         html.Label("Approach", style={'fontWeight': '500'}),
@@ -264,17 +371,46 @@ app.layout = html.Div([
                                 {'label': 'none (assume factors)', 'value': 'none'},
                             ],
                             value='frequency',
+                            style={
+                                'border': '1px solid #d0d7de',
+                                'borderRadius': '6px',
+                                'padding': '8px 12px',
+                                'backgroundColor': 'rgba(255, 255, 255, 0.8)',
+                                'backdropFilter': 'blur(10px)',
+                                'boxShadow': '0 1px 3px rgba(0, 0, 0, 0.1)',
+                                'transition': 'all 0.2s ease',
+                                'fontSize': '14px'
+                            }
                         ),
                     ], md=4),
                 ], style={'marginTop': '10px'}),
             ]),
 
             # Run button
-            html.Div(style={'textAlign': 'center'}, children=[
-                dbc.Button([html.I(className="fas fa-play-circle me-2"), "Run MBC"],
-                           id='mbc-run-button', n_clicks=0, color="info", className="btn-lg",
-                           style={'margin': '1rem 0', 'backgroundColor': '#00A2E1', 'color': 'white'}),
-            ]),
+            html.Div([
+                dbc.Button(
+                    [
+                        html.I(className="fas fa-play-circle me-2"),
+                        "Train MBC Model"
+                    ],
+                    id='mbc-run-button',
+                    n_clicks=0,
+                    color="info",
+                    className="btn-lg",
+                    style={
+                        'fontSize': '1.1rem',
+                        'padding': '0.75rem 2rem',
+                        'borderRadius': '8px',
+                        'boxShadow': '0 2px 4px rgba(0,0,0,0.1)',
+                        'transition': 'all 0.3s ease',
+                        'backgroundColor': '#00A2E1',
+                        'border': 'none',
+                        'margin': '1rem 0',
+                        'color': 'white',
+                        'fontWeight': '500'
+                    }
+                )
+            ], style={'textAlign': 'center'}),
 
             # 5. Network Visualization
             html.Div(id='mbc-network-container', style={'marginTop': '20px'}),
@@ -284,15 +420,107 @@ app.layout = html.Div([
         ])
     ),
 
-    # Help popovers for classes/features
-    dbc.Popover([
-        dbc.PopoverHeader("Classes", style={"fontWeight": "bold"}),
-        dbc.PopoverBody("Select the label columns (class variables) to predict. These can be binary or multi-valued factors."),
-    ], id="help-popover-mbc-classes", target="help-button-mbc-classes", placement="right", is_open=False, trigger="hover"),
-    dbc.Popover([
-        dbc.PopoverHeader("Features", style={"fontWeight": "bold"}),
-        dbc.PopoverBody("Select the input feature columns. If numeric, they will be discretized according to the selected method."),
-    ], id="help-popover-mbc-features", target="help-button-mbc-features", placement="right", is_open=False, trigger="hover"),
+    dbc.Popover(
+        [
+            dbc.PopoverHeader(
+                [
+                    "Class Variables",
+                    html.I(className="fa fa-info-circle ms-2", style={"color": "#0d6efd"})
+                ],
+                style={"backgroundColor": "#f8f9fa", "fontWeight": "bold"}
+            ),
+            dbc.PopoverBody(
+                [
+                    html.P("Select the label columns (class variables) to predict."),
+                    html.P("Key points:"),
+                    html.Ul([
+                        html.Li("Can select one or multiple class variables"),
+                        html.Li("Classes can be binary or multi-valued categorical"),
+                        html.Li("MBC will learn dependencies between classes"),
+                        html.Li("Cannot be used as features"),
+                    ]),
+                ],
+                style={"backgroundColor": "#ffffff", "borderRadius": "0 0 0.25rem 0.25rem", "maxWidth": "300px"}
+            ),
+        ],
+        id="help-popover-mbc-classes",
+        target="help-button-mbc-classes",
+        placement="right",
+        is_open=False,
+        trigger="hover",
+        style={"position": "absolute", "zIndex": 1000, "marginLeft": "5px"}
+    ),
+    
+    dbc.Popover(
+        [
+            dbc.PopoverHeader(
+                [
+                    "Feature Variables",
+                    html.I(className="fa fa-info-circle ms-2", style={"color": "#0d6efd"})
+                ],
+                style={"backgroundColor": "#f8f9fa", "fontWeight": "bold"}
+            ),
+            dbc.PopoverBody(
+                [
+                    html.P("Select the input feature columns used for prediction."),
+                    html.P("Important:"),
+                    html.Ul([
+                        html.Li("Features are used to predict class variables"),
+                        html.Li("Numeric features will be automatically discretized"),
+                        html.Li("Cannot select class variables as features"),
+                        html.Li("The network will learn dependencies among features"),
+                    ]),
+                ],
+                style={"backgroundColor": "#ffffff", "borderRadius": "0 0 0.25rem 0.25rem", "maxWidth": "300px"}
+            ),
+        ],
+        id="help-popover-mbc-features",
+        target="help-button-mbc-features",
+        placement="right",
+        is_open=False,
+        trigger="hover",
+        style={"position": "absolute", "zIndex": 1000, "marginLeft": "5px"}
+    ),
+    
+    dbc.Popover(
+        [
+            dbc.PopoverHeader(
+                [
+                    "Algorithm Options",
+                    html.I(className="fa fa-cog ms-2", style={"color": "#6c757d"})
+                ],
+                style={"backgroundColor": "#f8f9fa", "fontWeight": "bold"}
+            ),
+            dbc.PopoverBody(
+                [
+                    html.P("Configure the MBC learning algorithm:"),
+                    html.P([html.Strong("Approach:"), " Filter uses BIC score, Wrapper uses classification accuracy"]),
+                    html.P([html.Strong("Wrapper Measure:"), " Global (overall accuracy) or Average (per-class accuracy)"]),
+                    html.P([html.Strong("Train/Val Split:"), " Percentage of data used for training"]),
+                    html.P([html.Strong("Discretization:"), " Method to convert numeric features to categories"]),
+                ],
+                style={"backgroundColor": "#ffffff", "borderRadius": "0 0 0.25rem 0.25rem", "maxWidth": "350px"}
+            ),
+        ],
+        id="help-popover-mbc-options",
+        target="help-button-mbc-options",
+        placement="right",
+        is_open=False,
+        trigger="hover",
+        style={"position": "absolute", "zIndex": 1000, "marginLeft": "5px"}
+    ),
+    
+    # Notification container (outside dcc.Loading to avoid interference)
+    html.Div(id='notification-container', style={
+        'position': 'fixed',
+        'bottom': '20px',
+        'right': '20px',
+        'zIndex': '1000',
+        'width': '300px',
+        'transition': 'all 0.3s ease-in-out',
+        'transform': 'translateY(100%)',
+        'opacity': '0'
+    }),
 ])
 
 # ---------- Callbacks for UI interactivity ----------
@@ -427,6 +655,16 @@ def toggle_features(select_all_click, clear_all_click, feature_ids):
 
 # Popover toggles for help
 @app.callback(
+    Output("help-popover-upload", "is_open"),
+    Input("help-button-upload", "n_clicks"),
+    State("help-popover-upload", "is_open")
+)
+def toggle_help_upload(n, is_open):
+    if n:
+        return not is_open
+    return is_open
+
+@app.callback(
     Output("help-popover-mbc-classes", "is_open"),
     Input("help-button-mbc-classes", "n_clicks"),
     State("help-popover-mbc-classes", "is_open")
@@ -442,6 +680,16 @@ def toggle_help_classes(n, is_open):
     State("help-popover-mbc-features", "is_open")
 )
 def toggle_help_features(n, is_open):
+    if n:
+        return not is_open
+    return is_open
+
+@app.callback(
+    Output("help-popover-mbc-options", "is_open"),
+    Input("help-button-mbc-options", "n_clicks"),
+    State("help-popover-mbc-options", "is_open")
+)
+def toggle_help_options(n, is_open):
     if n:
         return not is_open
     return is_open
@@ -610,25 +858,83 @@ def run_mbc(n_clicks, dataset_store, classes, features, approach, measure, train
     except Exception as e:
         return html.Div(f"Error during prediction/evaluation: {e}", style={'color': 'red'}), None, {"message": str(e), "header": "Prediction Error"}
 
-    # Build results card
+    # Build results card with identical style to probExplainer
     per_class_rows = [
-        html.Tr([html.Td(cls_name), html.Td(f"{acc:.4f}")])
+        html.Tr([
+            html.Td(cls_name, style={'textAlign': 'center'}), 
+            html.Td(f"{acc:.4f}", style={'textAlign': 'center'})
+        ])
         for cls_name, acc in zip(classes, per_class_acc)
     ]
-    results_card = dbc.Card(dbc.CardBody([
-        html.H4("MBC Results", className="card-title"),
-        html.Pre(structure_str, style={'textAlign': 'left', 'whiteSpace': 'pre-wrap'}),
-        html.Hr(),
-        html.H5("Validation Performance"),
-        html.P([html.B("Global accuracy: "), f"{global_acc:.4f}"]),
-        html.P([html.B("Average accuracy: "), f"{avg_acc:.4f}"]),
-        dbc.Table(
-            # Table of per-class accuracies
-            [html.Thead(html.Tr([html.Th("Class"), html.Th("Accuracy")]))] + [html.Tbody(per_class_rows)],
-            bordered=True, size="sm", style={'width': '60%', 'margin': '0 auto'}
-        ),
-    ]), className="mt-3")
-    return results_card, network_data, None
+    results_card = dbc.Card(
+        dbc.CardBody([
+            html.H4("MBC Results", className="card-title", style={'textAlign': 'center', 'marginBottom': '20px'}),
+        
+        # Network Structure Section
+        html.Div([
+            html.H5("Learned Network Structure", style={'textAlign': 'center', 'color': '#00A2E1', 'marginBottom': '10px'}),
+            html.Pre(structure_str, style={
+                'textAlign': 'left', 
+                'whiteSpace': 'pre-wrap',
+                'backgroundColor': '#f8f9fa',
+                'padding': '15px',
+                'borderRadius': '5px',
+                'border': '1px solid #dee2e6',
+                'maxHeight': '200px',
+                'overflowY': 'auto'
+            }),
+        ], style={'marginBottom': '20px'}),
+        
+        html.Hr(style={'margin': '20px 0'}),
+        
+        # Performance Metrics Section
+        html.Div([
+            html.H5("Validation Performance", style={'textAlign': 'center', 'color': '#00A2E1', 'marginBottom': '15px'}),
+            
+            # Overall metrics
+            html.Div([
+                dbc.Row([
+                    dbc.Col([
+                        html.Div([
+                            html.I(className="fa fa-check-circle", style={'color': '#28a745', 'marginRight': '8px', 'fontSize': '18px'}),
+                            html.Strong("Global Accuracy: ", style={'fontSize': '16px'}),
+                            html.Span(f"{global_acc:.4f}", style={'fontSize': '16px', 'color': '#00A2E1', 'fontWeight': 'bold'})
+                        ], style={'textAlign': 'center', 'padding': '10px', 'backgroundColor': '#e7f3ff', 'borderRadius': '5px'})
+                    ], md=6),
+                    dbc.Col([
+                        html.Div([
+                            html.I(className="fa fa-bar-chart", style={'color': '#17a2b8', 'marginRight': '8px', 'fontSize': '18px'}),
+                            html.Strong("Average Accuracy: ", style={'fontSize': '16px'}),
+                            html.Span(f"{avg_acc:.4f}", style={'fontSize': '16px', 'color': '#00A2E1', 'fontWeight': 'bold'})
+                        ], style={'textAlign': 'center', 'padding': '10px', 'backgroundColor': '#e7f3ff', 'borderRadius': '5px'})
+                    ], md=6),
+                ], style={'marginBottom': '20px'})
+            ]),
+            
+            # Per-class accuracies table
+            html.Div([
+                html.H6("Per-Class Accuracies", style={'textAlign': 'center', 'marginBottom': '10px'}),
+                dbc.Table(
+                    [
+                        html.Thead(html.Tr([
+                            html.Th("Class Variable", style={'textAlign': 'center'}), 
+                            html.Th("Accuracy", style={'textAlign': 'center'})
+                        ])),
+                        html.Tbody(per_class_rows)
+                    ],
+                    bordered=True,
+                    striped=True,
+                    hover=True,
+                    responsive=True,
+                    className="mt-2",
+                    style={'width': '70%', 'margin': '0 auto'}
+                ),
+            ])
+        ]),
+        ]),
+        className="mt-3"
+    )
+    return results_card, network_data, {'header': 'Success', 'message': 'MBC model trained successfully!', 'icon': 'success'}
 
 # 6. Visualize learned network structure
 @app.callback(
@@ -690,12 +996,11 @@ def visualize_network(network_data):
             }
         })
     
-    # Create the visualization card
-    network_card = dbc.Card([
-        dbc.CardHeader([
-            html.H4("🔗 Learned Network Structure", className="mb-0")
-        ]),
+    # Create the visualization card with identical style to probExplainer
+    network_card = dbc.Card(
         dbc.CardBody([
+            html.H4("🔗 Learned Network Structure", className="card-title", style={'textAlign': 'center', 'color': '#00A2E1', 'marginBottom': '20px'}),
+        html.Div([
             cyto.Cytoscape(
                 id='mbc-network-graph',
                 elements=elements,
@@ -704,7 +1009,8 @@ def visualize_network(network_data):
                     'width': '100%',
                     'height': '500px',
                     'border': '1px solid #ddd',
-                    'borderRadius': '5px'
+                    'borderRadius': '5px',
+                    'backgroundColor': '#ffffff'
                 },
                 layout={
                     'name': 'cose',  # Force-directed layout
@@ -719,25 +1025,86 @@ def visualize_network(network_data):
                     'randomize': False
                 }
             ),
+        ], style={'marginBottom': '15px'}),
+        
+        # Legend and instructions
+        html.Div([
+            html.Hr(style={'margin': '15px 0'}),
             html.Div([
-                html.Hr(),
                 html.Div([
-                    html.Span("💡 ", style={'fontSize': '16px'}),
-                    html.B("Legend: "),
-                    html.Span("● Class nodes", style={'marginRight': '15px', 'color': '#00A2E1', 'fontWeight': 'bold'}),
-                    html.Span("▢ Feature nodes", style={'marginRight': '15px', 'color': '#90CAF9'}),
-                    html.Span("→ Class→Feature (highlighted)", style={'color': '#00A2E1'})
-                ], style={'textAlign': 'center', 'fontSize': '14px'}),
-                html.Div([
-                    html.Small([
-                        "Zoom: scroll | Pan: drag background | Move nodes: drag individual nodes"
-                    ], className="text-muted")
-                ], style={'textAlign': 'center', 'marginTop': '8px'})
-            ])
-        ])
-    ], className="mt-3")
+                    html.I(className="fa fa-info-circle", style={'marginRight': '8px', 'color': '#00A2E1'}),
+                    html.B("Legend: ", style={'color': '#333'}),
+                ], style={'display': 'inline-block', 'marginRight': '15px'}),
+                html.Span("● Class nodes", style={'marginRight': '15px', 'color': '#00A2E1', 'fontWeight': 'bold'}),
+                html.Span("▢ Feature nodes", style={'marginRight': '15px', 'color': '#90CAF9', 'fontWeight': '500'}),
+                html.Span("→ Class→Feature (bridge)", style={'color': '#00A2E1', 'fontWeight': '500'})
+            ], style={'textAlign': 'center', 'fontSize': '14px', 'marginBottom': '10px'}),
+            html.Div([
+                html.I(className="fa fa-hand-pointer-o", style={'marginRight': '5px', 'color': '#6c757d'}),
+                html.Small([
+                    "Zoom: scroll | Pan: drag background | Move nodes: drag individual nodes"
+                ], className="text-muted")
+            ], style={'textAlign': 'center'})
+        ], style={
+            'backgroundColor': '#f8f9fa',
+            'padding': '15px',
+            'borderRadius': '5px',
+            'border': '1px solid #dee2e6'
+        })
+        ]),
+        className="mt-3"
+    )
     
     return network_card
+
+# Notification system callback
+@app.callback(
+    [Output('notification-container', 'children'),
+     Output('notification-container', 'style')],
+    Input('notification-store', 'data')
+)
+def show_notification(data):
+    """Display notifications with Bootstrap toasts and animations"""
+    if data is None:
+        return None, {
+            'position': 'fixed',
+            'bottom': '20px',
+            'right': '20px',
+            'zIndex': '1000',
+            'width': '300px',
+            'transition': 'all 0.3s ease-in-out',
+            'transform': 'translateY(100%)',
+            'opacity': '0'
+        }
+    
+    # Create toast with animation
+    toast = dbc.Toast(
+        data['message'],
+        header=data['header'],
+        icon=data['icon'],
+        is_open=True,
+        dismissable=True,
+        style={
+            'width': '100%',
+            'boxShadow': '0 4px 6px rgba(0, 0, 0, 0.1)',
+            'borderRadius': '8px',
+            'marginBottom': '10px'
+        }
+    )
+    
+    # Style to show notification with animation
+    container_style = {
+        'position': 'fixed',
+        'bottom': '20px',
+        'right': '20px',
+        'zIndex': '1000',
+        'width': '300px',
+        'transition': 'all 0.3s ease-in-out',
+        'transform': 'translateY(0)',
+        'opacity': '1'
+    }
+    
+    return toast, container_style
 
 # Run the app
 if __name__ == '__main__':
