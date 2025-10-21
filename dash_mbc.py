@@ -48,7 +48,7 @@ app = dash.Dash(
 )
 server = app.server
 
-# Cytoscape stylesheet for network visualization
+# Cytoscape stylesheet for network visualization - CIG Corporate Style
 cytoscape_stylesheet = [
     {
         'selector': 'node',
@@ -56,28 +56,36 @@ cytoscape_stylesheet = [
             'content': 'data(label)',
             'text-valign': 'center',
             'text-halign': 'center',
-            'background-color': '#BFD7B5',
-            'border-color': '#A3C4BC',
+            'background-color': '#E3F2FD',  # Light blue
+            'border-color': '#90CAF9',
             'border-width': 2,
             'width': 50,
             'height': 50,
-            'font-size': 11
+            'font-size': 11,
+            'color': '#333',
+            'text-wrap': 'wrap',
+            'text-max-width': '80px'
         }
     },
     {
         'selector': 'node[type="class"]',
         'style': {
-            'background-color': '#FF6B6B',
-            'border-color': '#FF5252',
-            'shape': 'ellipse'
+            'background-color': '#00A2E1',  # CIG Corporate Blue
+            'border-color': '#0077A8',
+            'shape': 'ellipse',
+            'color': '#FFFFFF',  # White text for better contrast
+            'font-weight': 'bold',
+            'border-width': 3
         }
     },
     {
         'selector': 'node[type="feature"]',
         'style': {
-            'background-color': '#4ECDC4',
-            'border-color': '#26A69A',
-            'shape': 'rectangle'
+            'background-color': '#E3F2FD',  # Very light blue
+            'border-color': '#90CAF9',
+            'shape': 'rectangle',
+            'color': '#0077A8',
+            'border-width': 2
         }
     },
     {
@@ -87,30 +95,35 @@ cytoscape_stylesheet = [
             'target-arrow-shape': 'triangle',
             'target-arrow-color': '#666',
             'line-color': '#666',
-            'width': 2
+            'width': 2,
+            'opacity': 0.7
         }
     },
     {
         'selector': 'edge[type="class"]',
         'style': {
-            'line-color': '#FF6B6B',
-            'target-arrow-color': '#FF6B6B',
-            'width': 2.5
+            'line-color': '#0077A8',  # Dark CIG blue
+            'target-arrow-color': '#0077A8',
+            'width': 2.5,
+            'opacity': 0.8
         }
     },
     {
         'selector': 'edge[type="bridge"]',
         'style': {
-            'line-color': '#FFA726',
-            'target-arrow-color': '#FFA726',
-            'width': 3
+            'line-color': '#00A2E1',  # CIG Corporate Blue
+            'target-arrow-color': '#00A2E1',
+            'width': 3,
+            'opacity': 0.9
         }
     },
     {
         'selector': 'edge[type="feature"]',
         'style': {
-            'line-color': '#4ECDC4',
-            'target-arrow-color': '#4ECDC4'
+            'line-color': '#90CAF9',  # Light blue
+            'target-arrow-color': '#90CAF9',
+            'width': 2,
+            'opacity': 0.6
         }
     }
 ]
@@ -553,9 +566,21 @@ def run_mbc(n_clicks, dataset_store, classes, features, approach, measure, train
 
     # Get the learned network structure (arc list)
     try:
+        # Get arcs from the model
+        ro.r('arcs_matrix <- arcs(MBC_model)')
+        
+        # Convert to pandas DataFrame
         with pandas_converter.context():
-            arcs_df = pandas_converter.rpy2py(ro.r('as.data.frame(arcs(MBC_model))'))
-        if arcs_df.empty:
+            arcs_r = ro.r('as.data.frame(arcs_matrix, stringsAsFactors=FALSE)')
+            # The conversion happens automatically, just assign it
+            arcs_df = arcs_r
+            
+        # If it's still an R object, convert it manually
+        if not isinstance(arcs_df, pd.DataFrame):
+            with pandas_converter.context():
+                arcs_df = pandas_converter.rpy2py(arcs_df)
+        
+        if arcs_df.empty or len(arcs_df) == 0:
             structure_str = "(No arcs in the learned network.)"
             network_data = {'arcs': [], 'classes': classes, 'features': features}
         else:
@@ -669,7 +694,7 @@ def visualize_network(network_data):
     network_card = dbc.Card([
         dbc.CardHeader([
             html.H4("🔗 Learned Network Structure", className="mb-0"),
-            html.Small(" (Red circles = Classes, Blue rectangles = Features)", 
+            html.Small(" (CIG Corporate Style)", 
                       className="text-muted ms-2")
         ]),
         dbc.CardBody([
@@ -701,10 +726,15 @@ def visualize_network(network_data):
                 html.Div([
                     html.Span("💡 ", style={'fontSize': '16px'}),
                     html.B("Legend: "),
-                    html.Span("🔴 Class nodes", style={'marginRight': '15px', 'color': '#FF6B6B'}),
-                    html.Span("🔷 Feature nodes", style={'marginRight': '15px', 'color': '#4ECDC4'}),
-                    html.Span("🟠 Class→Feature edges", style={'color': '#FFA726'})
-                ], style={'textAlign': 'center', 'fontSize': '14px'})
+                    html.Span("● Class nodes (CIG blue)", style={'marginRight': '15px', 'color': '#00A2E1', 'fontWeight': 'bold'}),
+                    html.Span("▢ Feature nodes (light blue)", style={'marginRight': '15px', 'color': '#90CAF9'}),
+                    html.Span("→ Class→Feature (highlighted)", style={'color': '#00A2E1'})
+                ], style={'textAlign': 'center', 'fontSize': '14px'}),
+                html.Div([
+                    html.Small([
+                        "Zoom: scroll | Pan: drag background | Move nodes: drag individual nodes"
+                    ], className="text-muted")
+                ], style={'textAlign': 'center', 'marginTop': '8px'})
             ])
         ])
     ], className="mt-3")

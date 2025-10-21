@@ -5,15 +5,15 @@ Se ha agregado visualización interactiva de redes bayesianas aprendidas al dash
 
 ## ✨ Características
 
-### Visualización Interactiva
+### Visualización Interactiva - CIG Corporate Style
 - **Grafo interactivo** con nodos y aristas
 - **Layout automático** tipo force-directed (CoSE)
-- **Colores diferenciados**:
-  - 🔴 **Nodos rojos (círculos)**: Variables de clase
-  - 🔷 **Nodos azules (rectángulos)**: Variables features
-  - 🟠 **Aristas naranjas gruesas**: Conexiones clase → feature
-  - 🔴 **Aristas rojas**: Conexiones entre clases
-  - 🔷 **Aristas azules**: Conexiones entre features
+- **Colores corporativos CIG**:
+  - 🔵 **Nodos azul CIG (#00A2E1, círculos)**: Variables de clase (destacadas en negrita)
+  - 💠 **Nodos azul claro (#E3F2FD, rectángulos)**: Variables features
+  - ➡️ **Aristas azul CIG gruesas**: Conexiones clase → feature (destacadas)
+  - 🔹 **Aristas azul oscuro**: Conexiones entre clases
+  - 💨 **Aristas azul claro**: Conexiones entre features
 
 ### Interactividad
 - **Zoom**: Scroll del ratón
@@ -83,6 +83,27 @@ dash-cytoscape==0.3.0  # Ya incluido en requirements.txt
 - **Resultado**: Se muestra automáticamente:
   1. 🔗 **Network Structure** (visualización interactiva)
   2. 📊 **Performance metrics** (accuracy)
+
+## 🎨 Esquema de Colores CIG
+
+### Paleta Corporativa
+```python
+# Nodos
+Class nodes:    '#00A2E1'  # CIG Corporate Blue (elipses, texto blanco, negrita)
+Feature nodes:  '#E3F2FD'  # Light blue (rectángulos)
+
+# Aristas
+Class→Feature:  '#00A2E1'  # CIG Corporate Blue (destacadas, width: 3)
+Class→Class:    '#0077A8'  # Dark CIG blue (width: 2.5)
+Feature→Feature: '#90CAF9'  # Light blue (width: 2)
+Other:          '#666666'  # Gray (default)
+```
+
+### Mejoras de Accesibilidad
+- ✅ Texto blanco en nodos azules (alto contraste)
+- ✅ Bordes más gruesos en clases (más visibles)
+- ✅ Formas diferentes (círculos vs rectángulos)
+- ✅ Opacidad ajustada para reducir saturación visual
 
 ## 🎨 Personalización del Layout
 
