@@ -199,6 +199,63 @@ MBC_possible_arcs <- function(classes, features) {
 #   ŷ(x) = argmax_y log p(y, x) = argmax_y ∑_v log p(v | Pa(v))
 # We vectorize this by stacking every test case repeated I times with
 # every y ∈ Ω, then use bnlearn::logLik with by.sample=TRUE.
+
+###
+# Predict a single case (one row)
+# <MBC_model>: learned MBC model (bn.fit object)
+# <case>: data.frame with one row containing feature values
+# <classes>: character vector of class variable names
+# <features>: character vector of feature variable names
+#
+# Returns: named vector with predicted class values
+###
+predict_MBC_case <- function(MBC_model, case, classes, features) {
+  # If gRain is available, use exact inference
+  if (requireNamespace("gRain", quietly = TRUE)) {
+    tryCatch({
+      net_ev <- gRain::setEvidence(
+        gRain::as.grain(MBC_model), 
+        evidence = lapply(case[features], function(x) as.character(x))
+      )
+      res <- gRain::querygrain(net_ev, nodes = classes, type = "joint")
+      # MPE (0-1 loss function)
+      inds <- arrayInd(which.max(res), dim(res))
+      out <- mapply(function(dimnames, ind) dimnames[ind], dimnames(res), inds)
+      return(out)
+    }, error = function(e) {
+      # Fall through to brute force method if gRain fails
+    })
+  }
+  
+  # Fallback: brute force enumeration (same as dataset method but for 1 case)
+  class_levels <- lapply(classes, function(c) dimnames(MBC_model[[c]]$prob)[[1]])
+  names(class_levels) <- classes
+  class_joint <- expand.grid(class_levels)
+  I <- nrow(class_joint)
+  
+  # Create matrix with case repeated I times, each with different class combination
+  big_mat <- cbind(
+    case[rep(1, I), features, drop = FALSE],
+    class_joint
+  )
+  
+  # Compute log-likelihood for each combination
+  logL <- logLik(MBC_model, big_mat, by.sample = TRUE)
+  
+  # Return the class combination with highest likelihood
+  best_idx <- which.max(logL)
+  pred <- class_joint[best_idx, , drop = FALSE]
+  
+  # Return as named character vector
+  # Important: Convert factors to character properly using sapply
+  result <- sapply(pred[1, ], as.character)
+  names(result) <- classes
+  return(result)
+}
+
+###
+# Predict multiple cases (dataset)
+###
 predict_MBC_dataset_veryfast <- function(MBC_model, data_set, classes, features) {
   options(warn = -1)
 
