@@ -162,6 +162,9 @@ app.layout = html.Div([
     dcc.Store(id='mbc-model-trained', data=False),  # Flag for trained model
     dcc.Store(id='mbc-feature-values-store'),  # Store feature values/levels
     dcc.Store(id='notification-store'),
+    dcc.Store(id='dataset-change-detector', data=None),  # Detect dataset changes
+    dcc.Store(id='previous-classes-selection', data=[]),  # Track previous class selections
+    dcc.Store(id='previous-features-selection', data=[]),  # Track previous feature selections
     
     # Notification container
     html.Div(id='notification-container', style={
@@ -267,6 +270,22 @@ app.layout = html.Div([
                         multiple=False
                     ),
                 ], className="upload-card"),
+
+                # Use default dataset + help icon
+                html.Div([
+                    dcc.Checklist(
+                        id='use-default-dataset',
+                        options=[{'label': 'Use the default dataset', 'value': 'default'}],
+                        value=[],
+                        style={'display': 'inline-block', 'textAlign': 'center', 'marginTop': '10px'}
+                    ),
+                    dbc.Button(
+                        html.I(className="fa fa-question-circle"),
+                        id="help-button-default-dataset",
+                        color="link",
+                        style={"display": "inline-block", "marginLeft": "8px"}
+                    ),
+                ], style={'textAlign': 'center'}),
 
                 # Upload status
                 html.Div(id='mbc-upload-status', style={'textAlign': 'center', 'color': 'green'}),
@@ -430,6 +449,47 @@ app.layout = html.Div([
         [
             dbc.PopoverHeader(
                 [
+                    "Help",
+                    html.I(className="fa fa-info-circle ms-2", style={"color": "#0d6efd"})
+                ],
+                style={
+                    "backgroundColor": "#f8f9fa",  # Light gray background
+                    "fontWeight": "bold"
+                }
+            ),
+            dbc.PopoverBody(
+                [
+                    html.P(
+                        [
+                            "For details and content of the dataset, check out: ",
+                            html.A(
+                                "asia10KClassmayus.csv",
+                                href="https://github.com/KeevinPR/mbc-dash/blob/main/sample_data/asia10KClassmayus.csv",
+                                target="_blank",
+                                style={"textDecoration": "underline", "color": "#0d6efd"}
+                            ),
+                        ]
+                    ),
+                    html.Hr(),  # Horizontal rule for a modern divider
+                    html.P("Feel free to upload your own dataset at any time.")
+                ],
+                style={
+                    "backgroundColor": "#ffffff",
+                    "borderRadius": "0 0 0.25rem 0.25rem"
+                }
+            ),
+        ],
+        id="help-popover-default-dataset",
+        target="help-button-default-dataset",
+        placement="right",
+        is_open=False,
+        trigger="hover"
+    ),
+    
+    dbc.Popover(
+        [
+            dbc.PopoverHeader(
+                [
                     "Class Variables",
                     html.I(className="fa fa-info-circle ms-2", style={"color": "#0d6efd"})
                 ],
@@ -531,32 +591,200 @@ app.layout = html.Div([
 
 # ---------- Callbacks for UI interactivity ----------
 
-# 1. Load CSV into data store
+# 1A. Clear default checkbox when file is uploaded
+@app.callback(
+    Output('use-default-dataset', 'value'),
+    Input('mbc-upload-csv', 'contents'),
+    State('use-default-dataset', 'value'),
+    prevent_initial_call=True
+)
+def clear_default_on_upload(contents, current_value):
+    """Clear the 'Use default dataset' checkbox when a file is uploaded."""
+    if contents is not None:
+        logger.info("File uploaded, clearing default dataset checkbox")
+        return []  # Clear the checkbox
+    raise PreventUpdate
+
+# 1B. Load CSV into data store (from upload or default)
 @app.callback(
     Output('mbc-dataset-store', 'data'),
     Output('mbc-columns-store', 'data'),
     Output('mbc-upload-status', 'children'),
+    Output('notification-store', 'data'),
+    Output('dataset-change-detector', 'data'),
     Input('mbc-upload-csv', 'contents'),
     State('mbc-upload-csv', 'filename'),
+    Input('use-default-dataset', 'value'),
+    prevent_initial_call=False
+)
+def mbc_load_csv(contents, filename, default_value):
+    """Load dataset from uploaded file or default CSV."""
+    import time
+    
+    # Generate unique change ID for dataset change detection
+    change_id = str(time.time())
+    
+    # Priority 1: Handle file upload (takes precedence over default)
+    if contents:
+        logger.info(f"Attempting to load uploaded CSV: {filename}")
+        
+        # Validate file extension
+        if filename and not filename.lower().endswith('.csv'):
+            return dash.no_update, dash.no_update, dash.no_update, {
+                "message": "Please upload a .csv file. Other formats are not supported.",
+                "header": "Invalid File Format",
+                "icon": "warning"
+            }, dash.no_update
+        
+        content_type, content_string = contents.split(',')
+        try:
+            decoded = base64.b64decode(content_string)
+            # Read CSV into DataFrame
+            df = pd.read_csv(io.StringIO(decoded.decode('utf-8')))
+            
+            if df.empty:
+                return dash.no_update, dash.no_update, dash.no_update, {
+                    "message": "The uploaded CSV file is empty.",
+                    "header": "Empty File",
+                    "icon": "warning"
+                }, dash.no_update
+            
+            # Check if dataset is too large
+            if len(df) > 50000:
+                notification = {
+                    "message": f"Large dataset detected ({len(df)} rows). Performance may be affected.",
+                    "header": "Large Dataset",
+                    "icon": "warning"
+                }
+            else:
+                notification = None
+            
+            logger.info(f"Valid CSV uploaded: {filename} with {len(df)} rows, {len(df.columns)} columns")
+            
+            return (
+                {'records': df.to_dict('records'), 'columns': list(df.columns)},
+                list(df.columns),
+                f"✓ Loaded: {filename} ({len(df)} rows, {len(df.columns)} columns)",
+                notification,
+                change_id
+            )
+            
+        except UnicodeDecodeError:
+            logger.error(f"Error decoding file: {filename}")
+            return dash.no_update, dash.no_update, dash.no_update, {
+                "message": "Unable to decode the file. Please ensure it's a valid UTF-8 encoded CSV file.",
+                "header": "File Encoding Error",
+                "icon": "danger"
+            }, dash.no_update
+        except Exception as e:
+            logger.error(f"Error loading CSV: {e}")
+            return dash.no_update, dash.no_update, dash.no_update, {
+                "message": f"Error loading CSV: {str(e)}",
+                "header": "CSV Loading Error",
+                "icon": "danger"
+            }, dash.no_update
+    
+    # Priority 2: Handle default checkbox (only if no file was uploaded)
+    elif 'default' in default_value:
+        try:
+            # Path to default CSV file
+            default_path = '/var/www/html/CIGModels/backend/cigmodelsdjango/cigmodelsdjangoapp/mbc-dash/sample_data/asia10KClassmayus.csv'
+            
+            # Validate default file exists
+            if not os.path.exists(default_path):
+                logger.error("Default CSV file not found")
+                return dash.no_update, dash.no_update, dash.no_update, {
+                    "message": "Default dataset file not found. Please upload your own CSV file.",
+                    "header": "File Not Found",
+                    "icon": "danger"
+                }, dash.no_update
+            
+            # Read default CSV
+            df = pd.read_csv(default_path)
+            
+            if df.empty:
+                return dash.no_update, dash.no_update, dash.no_update, {
+                    "message": "Default dataset is empty.",
+                    "header": "Empty Dataset",
+                    "icon": "danger"
+                }, dash.no_update
+            
+            logger.info(f"Using default dataset: asia10KClassmayus.csv ({len(df)} rows, {len(df.columns)} columns)")
+            
+            return (
+                {'records': df.to_dict('records'), 'columns': list(df.columns)},
+                list(df.columns),
+                f"✓ Loaded: asia10KClassmayus.csv (default) ({len(df)} rows, {len(df.columns)} columns)",
+                None,
+                change_id
+            )
+            
+        except Exception as e:
+            logger.error(f"Error loading default dataset: {e}")
+            return dash.no_update, dash.no_update, dash.no_update, {
+                "message": f"Error loading default dataset: {str(e)}",
+                "header": "Invalid Default Dataset",
+                "icon": "danger"
+            }, dash.no_update
+    
+    # If neither default is checked nor any file is uploaded => do nothing
+    raise PreventUpdate
+
+# 1C. Reset app state when dataset changes
+@app.callback(
+    Output('mbc-results', 'children', allow_duplicate=True),
+    Output('mbc-network-container', 'children', allow_duplicate=True),
+    Output('mbc-prediction-section', 'children', allow_duplicate=True),
+    Output('mbc-model-trained', 'data', allow_duplicate=True),
+    Output('mbc-network-store', 'data', allow_duplicate=True),
+    Output('previous-classes-selection', 'data', allow_duplicate=True),
+    Output('previous-features-selection', 'data', allow_duplicate=True),
+    Output('notification-store', 'data', allow_duplicate=True),
+    Input('dataset-change-detector', 'data'),
     prevent_initial_call=True
 )
-def mbc_load_csv(contents, filename):
-    if not contents:
-        raise PreventUpdate
-    content_type, content_string = contents.split(',')
-    try:
-        decoded = base64.b64decode(content_string)
-        # Read CSV into DataFrame
-        df = pd.read_csv(io.StringIO(decoded.decode('utf-8')))
-    except Exception as e:
-        return dash.no_update, dash.no_update, f"Failed to read CSV: {e}"
-    if df.empty:
-        return dash.no_update, dash.no_update, "Uploaded file is empty."
-    return (
-        {'records': df.to_dict('records'), 'columns': list(df.columns)},  # store the dataset
-        list(df.columns),
-        f"Loaded: {filename}  ({len(df)} rows)"
-    )
+def reset_app_state_on_dataset_change(change_id):
+    """Reset app to clean state when dataset changes."""
+    if change_id is not None:
+        logger.info(f"Dataset changed (ID: {change_id}), resetting app state")
+        
+        # Create notification to inform user of reset
+        notification = {
+            "message": "Application state has been reset due to dataset change. Previous selections and results have been cleared.",
+            "header": "State Reset",
+            "icon": "info"
+        }
+        
+        return (
+            html.Div(),  # Clear results
+            html.Div(),  # Clear network visualization
+            html.Div(),  # Clear prediction section
+            False,       # Reset model trained flag
+            None,        # Clear network store
+            [],          # Clear previous class selection
+            [],          # Clear previous feature selection
+            notification # Notify user of reset
+        )
+    raise PreventUpdate
+
+# 1D. Clear checkboxes when dataset changes
+@app.callback(
+    Output({'type': 'mbc-class-checkbox', 'index': ALL}, 'value', allow_duplicate=True),
+    Output({'type': 'mbc-feature-checkbox', 'index': ALL}, 'value', allow_duplicate=True),
+    Input('dataset-change-detector', 'data'),
+    State({'type': 'mbc-class-checkbox', 'index': ALL}, 'id'),
+    State({'type': 'mbc-feature-checkbox', 'index': ALL}, 'id'),
+    prevent_initial_call=True
+)
+def clear_checkboxes_on_dataset_change(change_id, class_ids, feature_ids):
+    """Clear all checkbox selections when dataset changes to start fresh."""
+    if change_id is not None:
+        logger.info("Clearing all checkbox selections due to dataset change")
+        # Return empty lists for all checkboxes to clear them
+        class_clear = [[] for _ in class_ids]
+        feature_clear = [[] for _ in feature_ids] 
+        return class_clear, feature_clear
+    raise PreventUpdate
 
 # 2. Render class and feature checkboxes based on columns
 # IMPORTANT: Classes and features must be DISJOINT sets
@@ -679,11 +907,11 @@ def toggle_features(select_all_click, clear_all_click, feature_ids):
 
 # Popover toggles for help
 @app.callback(
-    Output("help-popover-upload", "is_open"),
-    Input("help-button-upload", "n_clicks"),
-    State("help-popover-upload", "is_open")
+    Output("help-popover-default-dataset", "is_open"),
+    Input("help-button-default-dataset", "n_clicks"),
+    State("help-popover-default-dataset", "is_open")
 )
-def toggle_help_upload(n, is_open):
+def toggle_help_default_dataset(n, is_open):
     if n:
         return not is_open
     return is_open
@@ -724,7 +952,7 @@ def toggle_help_options(n, is_open):
     Output('mbc-network-store', 'data'),
     Output('mbc-model-trained', 'data'),
     Output('mbc-feature-values-store', 'data'),
-    Output('notification-store', 'data'),
+    Output('notification-store', 'data', allow_duplicate=True),
     Input('mbc-run-button', 'n_clicks'),
     State('mbc-dataset-store', 'data'),
     State('mbc-classes-selected', 'data'),
@@ -740,25 +968,49 @@ def run_mbc(n_clicks, dataset_store, classes, features, approach, measure, train
         raise PreventUpdate
     # Validate selections
     if not dataset_store:
-        return html.Div("No dataset loaded.", style={'color': 'red'}), None, False, None, {"message": "Please upload a dataset first.", "header": "Error"}
+        return html.Div("No dataset loaded.", style={'color': 'red'}), None, False, None, {
+            "message": "Please upload a dataset or use the default dataset.",
+            "header": "No Dataset",
+            "icon": "danger"
+        }
     if not classes:
-        return html.Div("Please select at least one class variable.", style={'color': 'red'}), None, False, None, {"message": "No class variables selected.", "header": "Error"}
+        return html.Div("Please select at least one class variable.", style={'color': 'red'}), None, False, None, {
+            "message": "No class variables selected. Please select at least one class variable.",
+            "header": "Configuration Error",
+            "icon": "warning"
+        }
     if not features:
-        return html.Div("Please select at least one feature variable.", style={'color': 'red'}), None, False, None, {"message": "No feature variables selected.", "header": "Error"}
+        return html.Div("Please select at least one feature variable.", style={'color': 'red'}), None, False, None, {
+            "message": "No feature variables selected. Please select at least one feature variable.",
+            "header": "Configuration Error",
+            "icon": "warning"
+        }
     if set(classes) & set(features):
-        return html.Div("A column cannot be both class and feature.", style={'color': 'red'}), None, False, None, {"message": "Classes and features must be distinct.", "header": "Error"}
+        return html.Div("A column cannot be both class and feature.", style={'color': 'red'}), None, False, None, {
+            "message": "Classes and features must be distinct. A variable cannot be both a class and a feature.",
+            "header": "Variable Overlap Error",
+            "icon": "danger"
+        }
 
     # Convert stored dataset back to DataFrame
     try:
         df_all = pd.DataFrame.from_records(dataset_store['records'], columns=dataset_store['columns'])
     except Exception as e:
-        return html.Div(f"Error reading dataset: {e}", style={'color': 'red'}), None, False, None, {"message": str(e), "header": "Dataset Error"}
+        return html.Div(f"Error reading dataset: {e}", style={'color': 'red'}), None, False, None, {
+            "message": f"Error reading dataset: {str(e)}",
+            "header": "Dataset Error",
+            "icon": "danger"
+        }
 
     # Prepare R environment and source MBC functions
     try:
         ensure_r_ready()
     except Exception as e:
-        return html.Div(str(e), style={'color': 'red'}), None, False, None, {"message": str(e), "header": "R Environment Error"}
+        return html.Div(str(e), style={'color': 'red'}), None, False, None, {
+            "message": str(e),
+            "header": "R Environment Error",
+            "icon": "danger"
+        }
 
     # Convert all string columns to categorical in pandas first (before R conversion)
     for col in df_all.columns:
@@ -836,7 +1088,11 @@ def run_mbc(n_clicks, dataset_store, classes, features, approach, measure, train
             ro.globalenv['measure'] = measure
             ro.r('MBC_model <- learn_MBC_wrapper2(train_df, val_df, classes, features, measure = measure, verbose = FALSE)')
     except Exception as e:
-        return html.Div(f"Error during MBC training: {e}", style={'color': 'red'}), None, False, None, {"message": str(e), "header": "Training Error"}
+        return html.Div(f"Error during MBC training: {e}", style={'color': 'red'}), None, False, None, {
+            "message": f"Error during MBC training: {str(e)}",
+            "header": "Training Error",
+            "icon": "danger"
+        }
 
     # Get the learned network structure (arc list)
     try:
@@ -882,7 +1138,11 @@ def run_mbc(n_clicks, dataset_store, classes, features, approach, measure, train
         avg_acc = float(perf.rx2('average')[0])
         per_class_acc = list(perf.rx2('per_class'))
     except Exception as e:
-        return html.Div(f"Error during prediction/evaluation: {e}", style={'color': 'red'}), None, False, None, {"message": str(e), "header": "Prediction Error"}
+        return html.Div(f"Error during prediction/evaluation: {e}", style={'color': 'red'}), None, False, None, {
+            "message": f"Error during prediction/evaluation: {str(e)}",
+            "header": "Prediction Error",
+            "icon": "danger"
+        }
     
     # Extract feature levels/values for prediction UI
     try:
@@ -976,7 +1236,11 @@ def run_mbc(n_clicks, dataset_store, classes, features, approach, measure, train
         ]),
         className="mt-3"
     )
-    return results_card, network_data, True, feature_values, {'header': 'Success', 'message': 'MBC model trained successfully!', 'icon': 'success'}
+    return results_card, network_data, True, feature_values, {
+        'header': 'Success',
+        'message': 'MBC model trained successfully!',
+        'icon': 'success'
+    }
 
 # 6. Visualize learned network structure
 @app.callback(
