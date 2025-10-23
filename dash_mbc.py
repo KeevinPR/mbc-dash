@@ -159,6 +159,8 @@ app.layout = html.Div([
     dcc.Store(id='mbc-classes-selected', data=[]),
     dcc.Store(id='mbc-features-selected', data=[]),
     dcc.Store(id='mbc-network-store'),  # Store network structure
+    dcc.Store(id='mbc-model-trained', data=False),  # Flag for trained model
+    dcc.Store(id='mbc-feature-values-store'),  # Store feature values/levels
     dcc.Store(id='notification-store'),
     
     # Notification container
@@ -314,7 +316,8 @@ app.layout = html.Div([
                 }),
                 html.Div([
                     html.I(className="fa fa-info-circle", style={'marginRight': '5px', 'color': '#6c757d'}),
-                    html.Span("Classes cannot be used as features.", style={'fontSize': '11px', 'color': '#6c757d'}),
+                    html.Span("Classes and features must be disjoint sets. When you select a variable as a class, it will disappear from the feature list (and vice versa).", 
+                             style={'fontSize': '11px', 'color': '#6c757d'}),
                 ], style={'textAlign': 'center', 'marginTop': '8px'}),
             ]),
 
@@ -417,6 +420,9 @@ app.layout = html.Div([
 
             # 6. Performance Results
             html.Div(id='mbc-results', style={'textAlign': 'center', 'marginBottom': '2rem'}),
+
+            # 7. Individual Prediction Section
+            html.Div(id='mbc-prediction-section', style={'marginTop': '20px'}),
         ])
     ),
 
@@ -437,10 +443,10 @@ app.layout = html.Div([
                         html.Li("Can select one or multiple class variables"),
                         html.Li("Classes can be binary or multi-valued categorical"),
                         html.Li("MBC will learn dependencies between classes"),
-                        html.Li("Cannot be used as features"),
+                        html.Li([html.Strong("Mutually exclusive: "), "Once selected here, the variable disappears from features"]),
                     ]),
                 ],
-                style={"backgroundColor": "#ffffff", "borderRadius": "0 0 0.25rem 0.25rem", "maxWidth": "300px"}
+                style={"backgroundColor": "#ffffff", "borderRadius": "0 0 0.25rem 0.25rem", "maxWidth": "320px"}
             ),
         ],
         id="help-popover-mbc-classes",
@@ -467,11 +473,11 @@ app.layout = html.Div([
                     html.Ul([
                         html.Li("Features are used to predict class variables"),
                         html.Li("Numeric features will be automatically discretized"),
-                        html.Li("Cannot select class variables as features"),
+                        html.Li([html.Strong("Mutually exclusive: "), "Once selected here, the variable disappears from classes"]),
                         html.Li("The network will learn dependencies among features"),
                     ]),
                 ],
-                style={"backgroundColor": "#ffffff", "borderRadius": "0 0 0.25rem 0.25rem", "maxWidth": "300px"}
+                style={"backgroundColor": "#ffffff", "borderRadius": "0 0 0.25rem 0.25rem", "maxWidth": "320px"}
             ),
         ],
         id="help-popover-mbc-features",
@@ -553,42 +559,60 @@ def mbc_load_csv(contents, filename):
     )
 
 # 2. Render class and feature checkboxes based on columns
+# IMPORTANT: Classes and features must be DISJOINT sets
+# If a column is selected as a class, it will NOT appear in features and vice versa
 @app.callback(
     Output('mbc-class-checkbox-container', 'children'),
     Output('mbc-feature-checkbox-container', 'children'),
     Input('mbc-columns-store', 'data'),
-    State('mbc-classes-selected', 'data'),
-    State('mbc-features-selected', 'data'),
+    Input('mbc-classes-selected', 'data'),    # Changed to Input to trigger on changes
+    Input('mbc-features-selected', 'data'),   # Changed to Input to trigger on changes
 )
-def render_checkboxes(columns, prev_classes, prev_features):
+def render_checkboxes(columns, current_classes, current_features):
     if not columns:
         no_data_msg = html.Div("No dataset loaded.", style={'textAlign': 'center', 'color': '#666'})
         return no_data_msg, no_data_msg
-    # Create checklist items for classes and features
+    
+    # Create sets for quick lookup
+    class_set = set(current_classes or [])
+    feature_set = set(current_features or [])
+    
+    # Create checklist items for classes
+    # Only show columns that are NOT already selected as features
     class_checks = []
     for col in columns:
-        checked = True if prev_classes and col in prev_classes else False
+        # Skip if already selected as feature (makes them mutually exclusive)
+        if col in feature_set:
+            continue
+            
+        checked = col in class_set
         class_checks.append(
             dcc.Checklist(
                 id={'type': 'mbc-class-checkbox', 'index': col},
                 options=[{'label': f" {col}", 'value': col}],
-                value=[col] if checked else []
+                value=[col] if checked else [],
+                style={'marginBottom': '5px'}
             )
         )
+    
+    # Create checklist items for features
+    # Only show columns that are NOT already selected as classes
     feature_checks = []
-    # Features are all columns except those selected as classes
-    class_set = set(prev_classes or [])
     for col in columns:
-        if col in class_set: 
+        # Skip if already selected as class (makes them mutually exclusive)
+        if col in class_set:
             continue
-        checked = True if prev_features and col in prev_features else False
+            
+        checked = col in feature_set
         feature_checks.append(
             dcc.Checklist(
                 id={'type': 'mbc-feature-checkbox', 'index': col},
                 options=[{'label': f" {col}", 'value': col}],
-                value=[col] if checked else []
+                value=[col] if checked else [],
+                style={'marginBottom': '5px'}
             )
         )
+    
     # Arrange in two columns
     class_container = html.Div(class_checks, style={'columnCount': 2, 'margin': '0 auto', 'width': '80%'})
     feature_container = html.Div(feature_checks, style={'columnCount': 2, 'margin': '0 auto', 'width': '80%'})
@@ -698,6 +722,8 @@ def toggle_help_options(n, is_open):
 @app.callback(
     Output('mbc-results', 'children'),
     Output('mbc-network-store', 'data'),
+    Output('mbc-model-trained', 'data'),
+    Output('mbc-feature-values-store', 'data'),
     Output('notification-store', 'data'),
     Input('mbc-run-button', 'n_clicks'),
     State('mbc-dataset-store', 'data'),
@@ -714,25 +740,25 @@ def run_mbc(n_clicks, dataset_store, classes, features, approach, measure, train
         raise PreventUpdate
     # Validate selections
     if not dataset_store:
-        return html.Div("No dataset loaded.", style={'color': 'red'}), None, {"message": "Please upload a dataset first.", "header": "Error"}
+        return html.Div("No dataset loaded.", style={'color': 'red'}), None, False, None, {"message": "Please upload a dataset first.", "header": "Error"}
     if not classes:
-        return html.Div("Please select at least one class variable.", style={'color': 'red'}), None, {"message": "No class variables selected.", "header": "Error"}
+        return html.Div("Please select at least one class variable.", style={'color': 'red'}), None, False, None, {"message": "No class variables selected.", "header": "Error"}
     if not features:
-        return html.Div("Please select at least one feature variable.", style={'color': 'red'}), None, {"message": "No feature variables selected.", "header": "Error"}
+        return html.Div("Please select at least one feature variable.", style={'color': 'red'}), None, False, None, {"message": "No feature variables selected.", "header": "Error"}
     if set(classes) & set(features):
-        return html.Div("A column cannot be both class and feature.", style={'color': 'red'}), None, {"message": "Classes and features must be distinct.", "header": "Error"}
+        return html.Div("A column cannot be both class and feature.", style={'color': 'red'}), None, False, None, {"message": "Classes and features must be distinct.", "header": "Error"}
 
     # Convert stored dataset back to DataFrame
     try:
         df_all = pd.DataFrame.from_records(dataset_store['records'], columns=dataset_store['columns'])
     except Exception as e:
-        return html.Div(f"Error reading dataset: {e}", style={'color': 'red'}), None, {"message": str(e), "header": "Dataset Error"}
+        return html.Div(f"Error reading dataset: {e}", style={'color': 'red'}), None, False, None, {"message": str(e), "header": "Dataset Error"}
 
     # Prepare R environment and source MBC functions
     try:
         ensure_r_ready()
     except Exception as e:
-        return html.Div(str(e), style={'color': 'red'}), None, {"message": str(e), "header": "R Environment Error"}
+        return html.Div(str(e), style={'color': 'red'}), None, False, None, {"message": str(e), "header": "R Environment Error"}
 
     # Convert all string columns to categorical in pandas first (before R conversion)
     for col in df_all.columns:
@@ -810,7 +836,7 @@ def run_mbc(n_clicks, dataset_store, classes, features, approach, measure, train
             ro.globalenv['measure'] = measure
             ro.r('MBC_model <- learn_MBC_wrapper2(train_df, val_df, classes, features, measure = measure, verbose = FALSE)')
     except Exception as e:
-        return html.Div(f"Error during MBC training: {e}", style={'color': 'red'}), None, {"message": str(e), "header": "Training Error"}
+        return html.Div(f"Error during MBC training: {e}", style={'color': 'red'}), None, False, None, {"message": str(e), "header": "Training Error"}
 
     # Get the learned network structure (arc list)
     try:
@@ -856,7 +882,23 @@ def run_mbc(n_clicks, dataset_store, classes, features, approach, measure, train
         avg_acc = float(perf.rx2('average')[0])
         per_class_acc = list(perf.rx2('per_class'))
     except Exception as e:
-        return html.Div(f"Error during prediction/evaluation: {e}", style={'color': 'red'}), None, {"message": str(e), "header": "Prediction Error"}
+        return html.Div(f"Error during prediction/evaluation: {e}", style={'color': 'red'}), None, False, None, {"message": str(e), "header": "Prediction Error"}
+    
+    # Extract feature levels/values for prediction UI
+    try:
+        feature_values = {}
+        for feat in features:
+            # Get levels of each feature variable from the processed data
+            levels_r = ro.r(f'levels(df_all[["{feat}"]])')
+            if levels_r != ro.NULL:
+                feature_values[feat] = list(levels_r)
+            else:
+                # If not a factor, get unique values
+                unique_vals = ro.r(f'unique(as.character(df_all[["{feat}"]]))')
+                feature_values[feat] = list(unique_vals)
+    except Exception as e:
+        logger.warning(f"Could not extract feature values: {e}")
+        feature_values = {feat: [] for feat in features}
 
     # Build results card with identical style to probExplainer
     per_class_rows = [
@@ -934,7 +976,7 @@ def run_mbc(n_clicks, dataset_store, classes, features, approach, measure, train
         ]),
         className="mt-3"
     )
-    return results_card, network_data, {'header': 'Success', 'message': 'MBC model trained successfully!', 'icon': 'success'}
+    return results_card, network_data, True, feature_values, {'header': 'Success', 'message': 'MBC model trained successfully!', 'icon': 'success'}
 
 # 6. Visualize learned network structure
 @app.callback(
@@ -1056,6 +1098,232 @@ def visualize_network(network_data):
     )
     
     return network_card
+
+# 7. Render individual prediction section
+@app.callback(
+    Output('mbc-prediction-section', 'children'),
+    Input('mbc-model-trained', 'data'),
+    State('mbc-feature-values-store', 'data'),
+    State('mbc-classes-selected', 'data'),
+    State('mbc-features-selected', 'data'),
+    prevent_initial_call=True
+)
+def render_prediction_section(model_trained, feature_values, classes, features):
+    """Render the individual prediction UI after model is trained"""
+    if not model_trained or not feature_values:
+        return html.Div()
+    
+    # Create dropdowns for each feature
+    feature_inputs = []
+    for feat in features:
+        values = feature_values.get(feat, [])
+        if not values:
+            continue
+        
+        feature_inputs.append(
+            dbc.Row([
+                dbc.Col([
+                    html.Label(feat, style={'fontWeight': '500', 'marginBottom': '5px'})
+                ], md=3),
+                dbc.Col([
+                    dbc.Select(
+                        id={'type': 'mbc-predict-input', 'index': feat},
+                        options=[{'label': str(v), 'value': str(v)} for v in values],
+                        placeholder=f"Select {feat}...",
+                        style={
+                            'border': '1px solid #d0d7de',
+                            'borderRadius': '6px',
+                            'padding': '8px 12px',
+                            'backgroundColor': 'rgba(255, 255, 255, 0.8)',
+                        }
+                    )
+                ], md=9),
+            ], style={'marginBottom': '15px'})
+        )
+    
+    prediction_card = dbc.Card(
+        dbc.CardBody([
+            html.H4([
+                html.I(className="fa fa-magic", style={'marginRight': '10px', 'color': '#00A2E1'}),
+                "Individual Case Prediction"
+            ], className="card-title", style={'textAlign': 'center', 'marginBottom': '20px'}),
+            
+            html.P(
+                "Enter values for the features below to predict the class variables for a new instance.",
+                style={'textAlign': 'center', 'color': '#666', 'marginBottom': '20px'}
+            ),
+            
+            html.Div(feature_inputs, style={'maxWidth': '700px', 'margin': '0 auto'}),
+            
+            html.Div([
+                dbc.Button(
+                    [
+                        html.I(className="fas fa-brain me-2"),
+                        "Predict Classes"
+                    ],
+                    id='mbc-predict-button',
+                    color="success",
+                    className="btn-lg",
+                    style={
+                        'fontSize': '1rem',
+                        'padding': '0.6rem 1.5rem',
+                        'borderRadius': '8px',
+                        'marginTop': '10px'
+                    }
+                )
+            ], style={'textAlign': 'center', 'marginTop': '20px'}),
+            
+            html.Div(id='mbc-prediction-output', style={'marginTop': '25px'})
+        ]),
+        className="mt-3",
+        style={'backgroundColor': '#f8f9fa', 'border': '2px solid #00A2E1'}
+    )
+    
+    return prediction_card
+
+# 8. Make individual prediction
+@app.callback(
+    Output('mbc-prediction-output', 'children'),
+    Input('mbc-predict-button', 'n_clicks'),
+    State({'type': 'mbc-predict-input', 'index': ALL}, 'value'),
+    State({'type': 'mbc-predict-input', 'index': ALL}, 'id'),
+    State('mbc-classes-selected', 'data'),
+    State('mbc-features-selected', 'data'),
+    prevent_initial_call=True
+)
+def make_individual_prediction(n_clicks, feature_values, feature_ids, classes, features):
+    """Use predict_MBC_case to predict classes for a single instance"""
+    if not n_clicks:
+        raise PreventUpdate
+    
+    # Check if all features have values
+    if not all(feature_values):
+        return dbc.Alert(
+            "Please select values for all features before predicting.",
+            color="warning",
+            style={'marginTop': '15px'}
+        )
+    
+    # Build feature dictionary
+    evidence = {}
+    for val, id_dict in zip(feature_values, feature_ids):
+        feat_name = id_dict['index']
+        evidence[feat_name] = val
+    
+    # Call R predict_MBC_case function
+    try:
+        # Create a single-row data.frame in R with the feature values
+        ro.globalenv['classes'] = StrVector(classes)
+        ro.globalenv['features'] = StrVector(features)
+        
+        # Create the case data frame with proper factor levels from the trained model
+        # This is crucial: factors must have all levels that the model was trained with
+        ro.r('''
+        # Initialize empty data frame with proper structure
+        case_df <- data.frame(matrix(ncol = length(features), nrow = 1))
+        colnames(case_df) <- features
+        
+        # Set each feature value with the correct levels from the model
+        for (feat in features) {
+            # Get the levels from the trained model
+            if (feat %in% names(MBC_model)) {
+                feat_levels <- dimnames(MBC_model[[feat]]$prob)[[1]]
+            } else {
+                # If feature is not in model CPTs, get from training data (df_all)
+                feat_levels <- levels(df_all[[feat]])
+            }
+            case_df[[feat]] <- factor(NA, levels = feat_levels)
+        }
+        ''')
+        
+        # Now set the actual values
+        for feat in features:
+            val = evidence[feat]
+            ro.r(f'case_df[["{feat}"]][1] <- "{val}"')
+        
+        # Predict using the trained model (MBC_model is still in R environment)
+        ro.r('prediction <- predict_MBC_case(MBC_model, case_df, classes, features)')
+        
+        # Debug: print the prediction in R console
+        ro.r('print("=== DEBUG: Prediction output ===")')
+        ro.r('print(prediction)')
+        ro.r('print(class(prediction))')
+        ro.r('print(str(prediction))')
+        
+        # Extract the predicted values directly using R vectors
+        # This is more reliable than data.frame conversion
+        pred_names = list(ro.r('names(prediction)'))
+        pred_values = list(ro.r('as.character(unname(prediction))'))
+        
+        # Build dictionary
+        predicted_classes = {}
+        for name, value in zip(pred_names, pred_values):
+            predicted_classes[name] = value
+        
+        # Log for debugging
+        logger.info(f"Predicted classes: {predicted_classes}")
+        
+        # Format the results
+        result_rows = []
+        for cls, pred_val in predicted_classes.items():
+            result_rows.append(
+                html.Tr([
+                    html.Td(html.Strong(cls), style={'textAlign': 'center', 'padding': '10px'}),
+                    html.Td(
+                        html.Span(pred_val, style={
+                            'backgroundColor': '#d4edda', 
+                            'color': '#155724',
+                            'padding': '5px 15px',
+                            'borderRadius': '5px',
+                            'fontWeight': 'bold'
+                        }),
+                        style={'textAlign': 'center', 'padding': '10px'}
+                    )
+                ])
+            )
+        
+        results_table = dbc.Table(
+            [
+                html.Thead(html.Tr([
+                    html.Th("Class Variable", style={'textAlign': 'center', 'backgroundColor': '#e7f3ff'}),
+                    html.Th("Predicted Value", style={'textAlign': 'center', 'backgroundColor': '#e7f3ff'})
+                ])),
+                html.Tbody(result_rows)
+            ],
+            bordered=True,
+            striped=True,
+            hover=True,
+            responsive=True,
+            style={'margin': '20px auto', 'maxWidth': '600px'}
+        )
+        
+        return html.Div([
+            html.H5(
+                [
+                    html.I(className="fa fa-check-circle", style={'color': '#28a745', 'marginRight': '8px'}),
+                    "Prediction Results"
+                ],
+                style={'textAlign': 'center', 'color': '#00A2E1', 'marginBottom': '15px'}
+            ),
+            results_table,
+            html.Div([
+                html.I(className="fa fa-info-circle", style={'marginRight': '5px', 'color': '#17a2b8'}),
+                html.Small(
+                    "These predictions are based on the Most Probable Explanation (MPE) using the trained MBC model.",
+                    style={'color': '#666'}
+                )
+            ], style={'textAlign': 'center', 'marginTop': '10px'})
+        ])
+        
+    except Exception as e:
+        logger.error(f"Prediction error: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return dbc.Alert(
+            f"Error making prediction: {str(e)}",
+            color="danger",
+            style={'marginTop': '15px'}
+        )
 
 # Notification system callback
 @app.callback(
