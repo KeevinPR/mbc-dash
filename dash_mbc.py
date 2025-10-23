@@ -43,7 +43,7 @@ app = dash.Dash(
     __name__,
     external_stylesheets=[
         dbc.themes.BOOTSTRAP,
-        'https://bayes-interpret.com/Evidence/ProbExplainerDash/assets/liquid-glass.css'  # Apple Liquid Glass CSS
+        'https://bayes-interpret.com/Model/LearningFromData/MBCDash/assets/liquid-glass.css' # Apple Liquid Glass CSS
     ],
     requests_pathname_prefix='/Model/LearningFromData/MBCDash/',
     suppress_callback_exceptions=True
@@ -201,26 +201,26 @@ app.layout = html.Div([
                     html.A(
                         children=[
                             html.Img(
-                                src="https://cig.fi.upm.es/wp-content/uploads/github.png",
+                                src="https://cig.fi.upm.es/wp-content/uploads/2023/11/cropped-logo_CIG.png",
                                 style={"height": "24px", "marginRight": "8px"}
                             ),
-                            "GitHub Repository"
+                            "Proceeding Paper"
                         ],
-                        href="https://github.com/ptorrijos99/BayesFL",
+                        href="https://cig.fi.upm.es/wp-content/uploads/2024/01/2018_Book_IntelligentDataEngineeringAndA.pdf",
                         target="_blank",
-                        className="btn btn-outline-info me-2"
+                        className="btn btn-outline-primary me-2"
                     ),
                     html.A(
                         children=[
                             html.Img(
-                                src="https://cig.fi.upm.es/wp-content/uploads/2023/11/cropped-logo_CIG.png",
+                                src="https://cig.fi.upm.es/wp-content/uploads/github.png",
                                 style={"height": "24px", "marginRight": "8px"}
                             ),
-                            "Research Paper"
+                            "Dash Adapted GitHub"
                         ],
-                        href="https://cig.fi.upm.es/publications/",
+                        href="https://github.com/KeevinPR/mbc-dash",
                         target="_blank",
-                        className="btn btn-outline-primary me-2"
+                        className="btn btn-outline-info me-2"
                     ),
                 ]
             ),
