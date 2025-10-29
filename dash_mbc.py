@@ -211,7 +211,7 @@ app.layout = html.Div([
                             ),
                             "Proceeding Paper"
                         ],
-                        href="https://cig.fi.upm.es/wp-content/uploads/2024/01/2018_Book_IntelligentDataEngineeringAndA.pdf",
+                        href="https://cig.fi.upm.es/wp-content/uploads/2024/01/bielza_IJAR2011-2.pdf",
                         target="_blank",
                         className="btn btn-outline-primary me-2"
                     ),
@@ -377,13 +377,6 @@ app.layout = html.Div([
                 ], style={'marginTop': '10px'}),
                 dbc.Row([
                     dbc.Col([
-                        html.Label("Train / Validation split (%)", style={'fontWeight': '500'}),
-                        dcc.Slider(
-                            id='mbc-train-split', min=50, max=90, value=80, step=1,
-                            marks={i: f"{i}%" for i in [50, 60, 70, 80, 90]},
-                        ),
-                    ], md=8),
-                    dbc.Col([
                         html.Label("Discretization", style={'fontWeight': '500'}),
                         dbc.Select(
                             id='mbc-disc-method',
@@ -404,7 +397,9 @@ app.layout = html.Div([
                                 'fontSize': '14px'
                             }
                         ),
-                    ], md=4),
+                    ], md=6),
+                    # Hidden component to maintain train_split value (80% default)
+                    dcc.Store(id='mbc-train-split', data=80),
                 ], style={'marginTop': '10px'}),
             ]),
 
@@ -562,8 +557,9 @@ app.layout = html.Div([
                     html.P("Configure the MBC learning algorithm:"),
                     html.P([html.Strong("Approach:"), " Filter uses BIC score, Wrapper uses classification accuracy"]),
                     html.P([html.Strong("Wrapper Measure:"), " Global (overall accuracy) or Average (per-class accuracy)"]),
-                    html.P([html.Strong("Train/Val Split:"), " Percentage of data used for training"]),
                     html.P([html.Strong("Discretization:"), " Method to convert numeric features to categories"]),
+                    html.Hr(),
+                    html.Small([html.I(className="fa fa-info-circle me-1"), "Note: MBC uses an 80/20 train/validation split internally"], className="text-muted"),
                 ],
                 style={"backgroundColor": "#ffffff", "borderRadius": "0 0 0.25rem 0.25rem", "maxWidth": "350px"}
             ),
@@ -959,7 +955,7 @@ def toggle_help_options(n, is_open):
     State('mbc-features-selected', 'data'),
     State('mbc-approach-radio', 'value'),
     State('mbc-measure-radio', 'value'),
-    State('mbc-train-split', 'value'),
+    State('mbc-train-split', 'data'),
     State('mbc-disc-method', 'value'),
     prevent_initial_call=True
 )
