@@ -171,11 +171,14 @@ app.layout = html.Div([
         'position': 'fixed',
         'bottom': '20px',
         'right': '20px',
-        'zIndex': '1000',
-        'width': '300px',
-        'transition': 'all 0.3s ease-in-out',
-        'transform': 'translateY(100%)',
-        'opacity': '0'
+        'zIndex': '9999',
+        'width': '320px',
+        'maxHeight': '80vh',
+        'overflowY': 'auto',
+        'display': 'flex',
+        'flexDirection': 'column',
+        'gap': '10px',
+        'pointerEvents': 'none'  # Allow clicks through container to page
     }),
 
     dcc.Loading(
@@ -1600,52 +1603,40 @@ def make_individual_prediction(n_clicks, feature_values, feature_ids, classes, f
 
 # Notification system callback
 @app.callback(
-    [Output('notification-container', 'children'),
-     Output('notification-container', 'style')],
+    Output('notification-container', 'children'),
     Input('notification-store', 'data')
 )
 def show_notification(data):
-    """Display notifications with Bootstrap toasts and animations"""
+    """Display notifications with Bootstrap toasts - supports single or multiple toasts"""
     if data is None:
-        return None, {
-            'position': 'fixed',
-            'bottom': '20px',
-            'right': '20px',
-            'zIndex': '1000',
-            'width': '300px',
-            'transition': 'all 0.3s ease-in-out',
-            'transform': 'translateY(100%)',
-            'opacity': '0'
-        }
+        return None
     
-    # Create toast with animation
-    toast = dbc.Toast(
-        data['message'],
-        header=data['header'],
-        icon=data['icon'],
-        is_open=True,
-        dismissable=True,
-        style={
-            'width': '100%',
-            'boxShadow': '0 4px 6px rgba(0, 0, 0, 0.1)',
-            'borderRadius': '8px',
-            'marginBottom': '10px'
-        }
-    )
+    # Support both single notification (dict) and multiple notifications (list of dicts)
+    notifications = data if isinstance(data, list) else [data]
     
-    # Style to show notification with animation
-    container_style = {
-        'position': 'fixed',
-        'bottom': '20px',
-        'right': '20px',
-        'zIndex': '1000',
-        'width': '300px',
-        'transition': 'all 0.3s ease-in-out',
-        'transform': 'translateY(0)',
-        'opacity': '1'
-    }
+    # Create a toast for each notification
+    toasts = []
+    for notif in notifications:
+        toast = dbc.Toast(
+            notif.get('message', ''),
+            header=notif.get('header', 'Notification'),
+            icon=notif.get('icon', 'info'),
+            is_open=True,
+            dismissable=True,
+            duration=4000,  # Auto-dismiss after 4 seconds
+            style={
+                'width': '100%',
+                'boxShadow': '0 4px 12px rgba(0, 0, 0, 0.15)',
+                'borderRadius': '8px',
+                'backgroundColor': '#ffffff',
+                'border': '1px solid rgba(0, 0, 0, 0.1)',
+                'pointerEvents': 'auto',  # Re-enable clicks on the toast itself
+                'animation': 'slideInRight 0.3s ease-out'
+            }
+        )
+        toasts.append(toast)
     
-    return toast, container_style
+    return toasts
 
 # Run the app
 if __name__ == '__main__':
