@@ -5,7 +5,7 @@ Dash Application for Multi-dimensional Bayesian Classifier (MBC)
 This app allows training a multi-dimensional Bayesian network classifier on a dataset.
 """
 
-import sys, os, io, base64, logging
+import sys, os, io, base64, logging, zipfile, tempfile
 import dash
 import dash_bootstrap_components as dbc
 from dash import html, dcc
@@ -13,6 +13,7 @@ from dash import Input, Output, State, ALL
 from dash.exceptions import PreventUpdate
 import pandas as pd
 import dash_cytoscape as cyto
+from scipy.io import arff
 
 # R interface setup
 from rpy2 import robjects as ro
@@ -130,6 +131,85 @@ cytoscape_stylesheet = [
     }
 ]
 
+# Helper: Load ARFF file to pandas DataFrame
+def load_arff_to_dataframe(file_content):
+    """Load ARFF file content and convert to pandas DataFrame
+    
+    Args:
+        file_content: Can be bytes, a file path (str), or a file-like object
+    """
+    try:
+        # Parse ARFF data - handle different input types
+        if isinstance(file_content, str):
+            # If string, treat as file path (most reliable method for scipy)
+            data, meta = arff.loadarff(file_content)
+        elif isinstance(file_content, bytes):
+            # If bytes, create a temporary file to avoid scipy parsing issues
+            with tempfile.NamedTemporaryFile(mode='wb', suffix='.arff', delete=False) as tmp:
+                tmp.write(file_content)
+                tmp_path = tmp.name
+            try:
+                data, meta = arff.loadarff(tmp_path)
+            finally:
+                # Clean up temporary file
+                try:
+                    os.unlink(tmp_path)
+                except:
+                    pass
+        else:
+            # Assume it's a file-like object - read and use temporary file
+            content_bytes = file_content.read()
+            with tempfile.NamedTemporaryFile(mode='wb', suffix='.arff', delete=False) as tmp:
+                tmp.write(content_bytes)
+                tmp_path = tmp.name
+            try:
+                data, meta = arff.loadarff(tmp_path)
+            finally:
+                # Clean up temporary file
+                try:
+                    os.unlink(tmp_path)
+                except:
+                    pass
+        
+        # Convert to DataFrame
+        df = pd.DataFrame(data)
+        
+        # Convert byte strings to regular strings for object columns
+        for col in df.columns:
+            if df[col].dtype == 'object':
+                try:
+                    # Check if values are bytes
+                    if len(df) > 0 and isinstance(df[col].iloc[0], bytes):
+                        df[col] = df[col].apply(lambda x: x.decode('utf-8') if isinstance(x, bytes) else x)
+                except (AttributeError, IndexError, KeyError):
+                    pass
+        
+        return df
+    except Exception as e:
+        import traceback
+        logger.error(f"ARFF parsing error: {traceback.format_exc()}")
+        raise ValueError(f"Error parsing ARFF file: {str(e)}")
+
+# Helper: Load ZIP file and extract first CSV or ARFF
+def load_zip_to_dataframe(file_content):
+    """Extract and load the first CSV or ARFF file from a ZIP archive"""
+    try:
+        with zipfile.ZipFile(io.BytesIO(file_content)) as z:
+            # Find first CSV or ARFF file
+            for filename in z.namelist():
+                if filename.endswith('.csv'):
+                    with z.open(filename) as f:
+                        return pd.read_csv(f), filename
+                elif filename.endswith('.arff'):
+                    with z.open(filename) as f:
+                        return load_arff_to_dataframe(f.read()), filename
+            
+            raise ValueError("No CSV or ARFF file found in the ZIP archive")
+    except zipfile.BadZipFile:
+        raise ValueError("Invalid ZIP file")
+    except Exception as e:
+        raise ValueError(f"Error extracting ZIP file: {str(e)}")
+
 # Helper: Ensure R environment is ready and source the MBC R script
 def ensure_r_ready():
     try:
@@ -150,6 +230,25 @@ def ensure_r_ready():
         ro.r['source'](R_SRC_PATH)
     except Exception as e:
         raise RuntimeError(f"Failed to source R file {R_SRC_PATH}: {e}")
+
+# Pre-initialize R environment at startup to avoid 500 errors on first request
+# Wrapped in try-except to prevent app crash if R is not available
+def init_r_environment():
+    """Initialize R environment safely without crashing the app"""
+    try:
+        logger.info("Pre-initializing R environment...")
+        ensure_r_ready()
+        logger.info("✓ R environment ready")
+        return True
+    except Exception as e:
+        logger.error(f"⚠ Warning: R environment initialization failed: {e}")
+        logger.error("The app will try to initialize R on first model training.")
+        import traceback
+        logger.error(traceback.format_exc())
+        return False
+
+# Call initialization in a safe way
+r_ready = init_r_environment()
 
 # App layout
 app.layout = html.Div([
@@ -252,7 +351,7 @@ app.layout = html.Div([
             # (A) Data upload
             ########################################################
             html.Div(className="card", children=[
-                html.H3("1. Upload Dataset (CSV)", style={'textAlign': 'center'}),
+                html.H3("1. Upload Dataset", style={'textAlign': 'center'}),
 
                 # Container "card"
                 html.Div([
@@ -262,7 +361,9 @@ app.layout = html.Div([
                             src="https://img.icons8.com/ios-glyphs/40/cloud--v1.png",
                             className="upload-icon"
                         ),
-                        html.Div("Drag and drop or select a CSV file", className="upload-text")
+                        html.Div("Drag and drop or select a file", className="upload-text"),
+                        html.Div("Supported: CSV, ARFF, ZIP", 
+                                style={'fontSize': '12px', 'color': '#6c757d', 'marginTop': '5px'})
                     ]),
                     
                     # Upload component
@@ -278,7 +379,9 @@ app.layout = html.Div([
                 html.Div([
                     dcc.Checklist(
                         id='use-default-dataset',
-                        options=[{'label': 'Use the default dataset', 'value': 'default'}],
+                        options=[
+                            {'label': ' Use Emotions dataset (ARFF)', 'value': 'emotions'}
+                        ],
                         value=[],
                         style={'display': 'inline-block', 'textAlign': 'center', 'marginTop': '10px'}
                     ),
@@ -286,7 +389,7 @@ app.layout = html.Div([
                         html.I(className="fa fa-question-circle"),
                         id="help-button-default-dataset",
                         color="link",
-                        style={"display": "inline-block", "marginLeft": "8px"}
+                        style={"display": "inline-block", "marginLeft": "8px", "verticalAlign": "top"}
                     ),
                 ], style={'textAlign': 'center'}),
 
@@ -472,33 +575,36 @@ app.layout = html.Div([
         [
             dbc.PopoverHeader(
                 [
-                    "Help",
+                    "Dataset Help",
                     html.I(className="fa fa-info-circle ms-2", style={"color": "#0d6efd"})
                 ],
                 style={
-                    "backgroundColor": "#f8f9fa",  # Light gray background
+                    "backgroundColor": "#f8f9fa",
                     "fontWeight": "bold"
                 }
             ),
             dbc.PopoverBody(
                 [
-                    html.P(
-                        [
-                            "For details and content of the dataset, check out: ",
-                            html.A(
-                                "merged_training.pkl (Emotion Dataset)",
-                                href="https://github.com/dair-ai/emotion_dataset",
-                                target="_blank",
-                                style={"textDecoration": "underline", "color": "#0d6efd"}
-                            ),
-                        ]
-                    ),
-                    html.Hr(),  # Horizontal rule for a modern divider
-                    html.P("Feel free to upload your own dataset at any time.")
+                    html.P([html.Strong("Default Dataset:")]),
+                    html.P([
+                        html.Strong("Emotions: "),
+                        "Multi-label music emotion dataset (ARFF format)"
+                    ], style={'marginBottom': '8px'}),
+                    html.Ul([
+                        html.Li("72 audio features (MFCC, Centroid, Rolloff, Flux)"),
+                        html.Li("6 binary emotion classes"),
+                        html.Li("593 music samples"),
+                    ], style={'fontSize': '13px', 'marginBottom': '10px'}),
+                    html.Hr(),
+                    html.P([html.Strong("Upload Your Own:")]),
+                    html.P("Supported formats: CSV, ARFF, or ZIP files", style={'fontSize': '13px'}),
+                    html.P("Numeric features will be automatically discretized.",
+                          style={'fontSize': '13px', 'marginBottom': '0'})
                 ],
                 style={
                     "backgroundColor": "#ffffff",
-                    "borderRadius": "0 0 0.25rem 0.25rem"
+                    "borderRadius": "0 0 0.25rem 0.25rem",
+                    "maxWidth": "400px"
                 }
             ),
         ],
@@ -630,7 +736,7 @@ def clear_default_on_upload(contents, current_value):
     prevent_initial_call=False
 )
 def mbc_load_csv(contents, filename, default_value):
-    """Load dataset from uploaded file or default CSV."""
+    """Load dataset from uploaded file (CSV/ARFF/ZIP) or default datasets."""
     import time
     
     # Generate unique change ID for dataset change detection
@@ -638,25 +744,39 @@ def mbc_load_csv(contents, filename, default_value):
     
     # Priority 1: Handle file upload (takes precedence over default)
     if contents:
-        logger.info(f"Attempting to load uploaded CSV: {filename}")
-        
-        # Validate file extension
-        if filename and not filename.lower().endswith('.csv'):
-            return dash.no_update, dash.no_update, dash.no_update, {
-                "message": "Please upload a .csv file. Other formats are not supported.",
-                "header": "Invalid File Format",
-                "icon": "warning"
-            }, dash.no_update
+        logger.info(f"Attempting to load uploaded file: {filename}")
         
         content_type, content_string = contents.split(',')
         try:
             decoded = base64.b64decode(content_string)
-            # Read CSV into DataFrame
-            df = pd.read_csv(io.StringIO(decoded.decode('utf-8')))
+            df = None
+            extracted_filename = filename
             
-            if df.empty:
+            # Determine file type and load appropriately
+            if filename.lower().endswith('.csv'):
+                # Load CSV
+                df = pd.read_csv(io.StringIO(decoded.decode('utf-8')))
+                
+            elif filename.lower().endswith('.arff'):
+                # Load ARFF
+                df = load_arff_to_dataframe(decoded)
+                
+            elif filename.lower().endswith('.zip'):
+                # Extract and load from ZIP
+                df, extracted_filename = load_zip_to_dataframe(decoded)
+                logger.info(f"Extracted {extracted_filename} from ZIP archive")
+                
+            else:
                 return dash.no_update, dash.no_update, dash.no_update, {
-                    "message": "The uploaded CSV file is empty.",
+                    "message": "Unsupported file format. Please upload CSV, ARFF, or ZIP files.",
+                    "header": "Invalid File Format",
+                    "icon": "warning"
+                }, dash.no_update
+            
+            # Validate DataFrame
+            if df is None or df.empty:
+                return dash.no_update, dash.no_update, dash.no_update, {
+                    "message": "The uploaded file is empty or could not be parsed.",
                     "header": "Empty File",
                     "icon": "warning"
                 }, dash.no_update
@@ -671,7 +791,7 @@ def mbc_load_csv(contents, filename, default_value):
             else:
                 notification = None
             
-            logger.info(f"Valid CSV uploaded: {filename} with {len(df)} rows, {len(df.columns)} columns")
+            logger.info(f"Successfully loaded: {filename} → {len(df)} rows, {len(df.columns)} columns")
             
             return (
                 {'records': df.to_dict('records'), 'columns': list(df.columns)},
@@ -684,35 +804,44 @@ def mbc_load_csv(contents, filename, default_value):
         except UnicodeDecodeError:
             logger.error(f"Error decoding file: {filename}")
             return dash.no_update, dash.no_update, dash.no_update, {
-                "message": "Unable to decode the file. Please ensure it's a valid UTF-8 encoded CSV file.",
+                "message": "Unable to decode the file. Please ensure it's properly encoded (UTF-8).",
                 "header": "File Encoding Error",
                 "icon": "danger"
             }, dash.no_update
-        except Exception as e:
-            logger.error(f"Error loading CSV: {e}")
+        except ValueError as e:
+            logger.error(f"ValueError loading file: {e}")
             return dash.no_update, dash.no_update, dash.no_update, {
-                "message": f"Error loading CSV: {str(e)}",
-                "header": "CSV Loading Error",
+                "message": str(e),
+                "header": "File Format Error",
+                "icon": "danger"
+            }, dash.no_update
+        except Exception as e:
+            logger.error(f"Error loading file: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return dash.no_update, dash.no_update, dash.no_update, {
+                "message": f"Error loading file: {str(e)}",
+                "header": "Loading Error",
                 "icon": "danger"
             }, dash.no_update
     
-    # Priority 2: Handle default checkbox (only if no file was uploaded)
-    elif 'default' in default_value:
+    # Priority 2: Handle default dataset selection (only if no file was uploaded)
+    elif 'emotions' in (default_value or []):
         try:
-            # Path to default PKL file (Emotion Dataset)
-            default_path = '/var/www/html/CIGModels/backend/cigmodelsdjango/cigmodelsdjangoapp/mbc-dash/sample_data/merged_training.pkl'
+            # Load Emotions ARFF dataset
+            default_path = '/var/www/html/CIGModels/backend/cigmodelsdjango/cigmodelsdjangoapp/mbc-dash/sample_data/Emotions/emotions.arff'
             
-            # Validate default file exists
             if not os.path.exists(default_path):
-                logger.error("Default PKL file not found")
+                logger.error("Emotions ARFF file not found")
                 return dash.no_update, dash.no_update, dash.no_update, {
-                    "message": "Default dataset file not found. Please upload your own CSV file.",
+                    "message": "Emotions dataset file not found.",
                     "header": "File Not Found",
                     "icon": "danger"
                 }, dash.no_update
             
-            # Read default PKL file
-            df = pd.read_pickle(default_path)
+            # Pass the file path directly to avoid binary/text mode issues
+            df = load_arff_to_dataframe(default_path)
+            dataset_name = "emotions.arff (Emotions dataset)"
             
             if df.empty:
                 return dash.no_update, dash.no_update, dash.no_update, {
@@ -721,25 +850,27 @@ def mbc_load_csv(contents, filename, default_value):
                     "icon": "danger"
                 }, dash.no_update
             
-            logger.info(f"Using default dataset: merged_training.pkl (Emotion Dataset) ({len(df)} rows, {len(df.columns)} columns)")
+            logger.info(f"Using default dataset: {dataset_name} ({len(df)} rows, {len(df.columns)} columns)")
             
             return (
                 {'records': df.to_dict('records'), 'columns': list(df.columns)},
                 list(df.columns),
-                f"✓ Loaded: merged_training.pkl (Emotion Dataset) ({len(df)} rows, {len(df.columns)} columns)",
+                f"✓ Loaded: {dataset_name} ({len(df)} rows, {len(df.columns)} columns)",
                 None,
                 change_id
             )
             
         except Exception as e:
             logger.error(f"Error loading default dataset: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
             return dash.no_update, dash.no_update, dash.no_update, {
                 "message": f"Error loading default dataset: {str(e)}",
                 "header": "Invalid Default Dataset",
                 "icon": "danger"
             }, dash.no_update
     
-    # If neither default is checked nor any file is uploaded => do nothing
+    # If neither default is selected nor any file is uploaded => do nothing
     raise PreventUpdate
 
 # 1C. Reset app state when dataset changes
