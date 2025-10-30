@@ -353,50 +353,75 @@ app.layout = html.Div([
                 ], style={"textAlign": "center", "position": "relative"}),
                 dbc.Row([
                     dbc.Col([
-                        html.Label("Approach", style={'fontWeight': '500'}),
-                        dbc.RadioItems(
-                            id='mbc-approach-radio',
-                            options=[
-                                {'label': 'Filter (BIC)', 'value': 'filter'},
-                                {'label': 'Wrapper (Accuracy)', 'value': 'wrapper'},
-                            ],
-                            value='filter', inline=True,
-                        ),
+                        html.Label("Approach", style={'fontWeight': '500', 'marginBottom': '10px', 'display': 'block', 'textAlign': 'center'}),
+                        html.Div([
+                            dcc.RadioItems(
+                                id='mbc-approach-radio',
+                                options=[
+                                    {'label': ' Filter (BIC)', 'value': 'filter'},
+                                    {'label': ' Wrapper (Accuracy)', 'value': 'wrapper'},
+                                ],
+                                value='filter',
+                                labelStyle={'display': 'block', 'marginBottom': '8px'},
+                                inputStyle={'marginRight': '8px'}
+                            ),
+                        ], style={
+                            'backgroundColor': '#f8f9fa',
+                            'padding': '15px',
+                            'borderRadius': '5px',
+                            'border': '1px solid #ddd',
+                            'margin': '0 auto',
+                            'width': '90%'
+                        }),
                     ], md=6),
                     dbc.Col([
-                        html.Label("Wrapper Measure", style={'fontWeight': '500'}),
-                        dbc.RadioItems(
-                            id='mbc-measure-radio',
-                            options=[
-                                {'label': 'Global accuracy', 'value': 'global'},
-                                {'label': 'Average accuracy', 'value': 'average'},
-                            ],
-                            value='global', inline=True,
-                        ),
+                        html.Label("Wrapper Measure", style={'fontWeight': '500', 'marginBottom': '10px', 'display': 'block', 'textAlign': 'center'}),
+                        html.Div([
+                            dcc.RadioItems(
+                                id='mbc-measure-radio',
+                                options=[
+                                    {'label': ' Global accuracy', 'value': 'global'},
+                                    {'label': ' Average accuracy', 'value': 'average'},
+                                ],
+                                value='global',
+                                labelStyle={'display': 'block', 'marginBottom': '8px'},
+                                inputStyle={'marginRight': '8px'}
+                            ),
+                        ], style={
+                            'backgroundColor': '#f8f9fa',
+                            'padding': '15px',
+                            'borderRadius': '5px',
+                            'border': '1px solid #ddd',
+                            'margin': '0 auto',
+                            'width': '90%'
+                        }),
                     ], md=6),
                 ], style={'marginTop': '10px'}),
                 dbc.Row([
                     dbc.Col([
-                        html.Label("Discretization", style={'fontWeight': '500'}),
-                        dbc.Select(
-                            id='mbc-disc-method',
-                            options=[
-                                {'label': 'frequency (3 bins)', 'value': 'frequency'},
-                                {'label': 'cluster (3 bins)', 'value': 'cluster'},
-                                {'label': 'none (assume factors)', 'value': 'none'},
-                            ],
-                            value='frequency',
-                            style={
-                                'border': '1px solid #d0d7de',
-                                'borderRadius': '6px',
-                                'padding': '8px 12px',
-                                'backgroundColor': 'rgba(255, 255, 255, 0.8)',
-                                'backdropFilter': 'blur(10px)',
-                                'boxShadow': '0 1px 3px rgba(0, 0, 0, 0.1)',
-                                'transition': 'all 0.2s ease',
-                                'fontSize': '14px'
-                            }
-                        ),
+                        html.Label("Discretization", style={'fontWeight': '500', 'marginBottom': '10px', 'display': 'block', 'textAlign': 'center'}),
+                        html.Div([
+                            dcc.Dropdown(
+                                id='mbc-disc-method',
+                                options=[
+                                    {'label': 'frequency (3 bins)', 'value': 'frequency'},
+                                    {'label': 'cluster (3 bins)', 'value': 'cluster'},
+                                    {'label': 'none (assume factors)', 'value': 'none'},
+                                ],
+                                value='frequency',
+                                clearable=False,
+                                style={
+                                    'fontSize': '14px'
+                                }
+                            ),
+                        ], style={
+                            'backgroundColor': '#f8f9fa',
+                            'padding': '15px',
+                            'borderRadius': '5px',
+                            'border': '1px solid #ddd',
+                            'margin': '0 auto',
+                            'width': '90%'
+                        }),
                     ], md=6),
                     # Hidden component to maintain train_split value (80% default)
                     dcc.Store(id='mbc-train-split', data=80),
