@@ -596,18 +596,6 @@ app.layout = html.Div([
         trigger="hover",
         style={"position": "absolute", "zIndex": 1000, "marginLeft": "5px"}
     ),
-    
-    # Notification container (outside dcc.Loading to avoid interference)
-    html.Div(id='notification-container', style={
-        'position': 'fixed',
-        'bottom': '20px',
-        'right': '20px',
-        'zIndex': '1000',
-        'width': '300px',
-        'transition': 'all 0.3s ease-in-out',
-        'transform': 'translateY(100%)',
-        'opacity': '0'
-    }),
 ])
 
 # ---------- Callbacks for UI interactivity ----------
