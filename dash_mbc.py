@@ -483,8 +483,8 @@ app.layout = html.Div([
                         [
                             "For details and content of the dataset, check out: ",
                             html.A(
-                                "asia10KClassmayus.csv",
-                                href="https://github.com/KeevinPR/mbc-dash/blob/main/sample_data/asia10KClassmayus.csv",
+                                "merged_training.pkl (Emotion Dataset)",
+                                href="https://github.com/dair-ai/emotion_dataset",
                                 target="_blank",
                                 style={"textDecoration": "underline", "color": "#0d6efd"}
                             ),
@@ -708,20 +708,20 @@ def mbc_load_csv(contents, filename, default_value):
     # Priority 2: Handle default checkbox (only if no file was uploaded)
     elif 'default' in default_value:
         try:
-            # Path to default CSV file
-            default_path = '/var/www/html/CIGModels/backend/cigmodelsdjango/cigmodelsdjangoapp/mbc-dash/sample_data/asia10KClassmayus.csv'
+            # Path to default PKL file (Emotion Dataset)
+            default_path = '/var/www/html/CIGModels/backend/cigmodelsdjango/cigmodelsdjangoapp/mbc-dash/sample_data/merged_training.pkl'
             
             # Validate default file exists
             if not os.path.exists(default_path):
-                logger.error("Default CSV file not found")
+                logger.error("Default PKL file not found")
                 return dash.no_update, dash.no_update, dash.no_update, {
                     "message": "Default dataset file not found. Please upload your own CSV file.",
                     "header": "File Not Found",
                     "icon": "danger"
                 }, dash.no_update
             
-            # Read default CSV
-            df = pd.read_csv(default_path)
+            # Read default PKL file
+            df = pd.read_pickle(default_path)
             
             if df.empty:
                 return dash.no_update, dash.no_update, dash.no_update, {
@@ -730,12 +730,12 @@ def mbc_load_csv(contents, filename, default_value):
                     "icon": "danger"
                 }, dash.no_update
             
-            logger.info(f"Using default dataset: asia10KClassmayus.csv ({len(df)} rows, {len(df.columns)} columns)")
+            logger.info(f"Using default dataset: merged_training.pkl (Emotion Dataset) ({len(df)} rows, {len(df.columns)} columns)")
             
             return (
                 {'records': df.to_dict('records'), 'columns': list(df.columns)},
                 list(df.columns),
-                f"✓ Loaded: asia10KClassmayus.csv (default) ({len(df)} rows, {len(df.columns)} columns)",
+                f"✓ Loaded: merged_training.pkl (Emotion Dataset) ({len(df)} rows, {len(df.columns)} columns)",
                 None,
                 change_id
             )
