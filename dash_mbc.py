@@ -481,26 +481,28 @@ app.layout = html.Div([
                         }),
                     ], md=6),
                     dbc.Col([
-                        html.Label("Wrapper Measure", style={'fontWeight': '500', 'marginBottom': '10px', 'display': 'block', 'textAlign': 'center'}),
-                        html.Div([
-                            dcc.RadioItems(
-                                id='mbc-measure-radio',
-                                options=[
-                                    {'label': ' Global accuracy', 'value': 'global'},
-                                    {'label': ' Average accuracy', 'value': 'average'},
-                                ],
-                                value='global',
-                                labelStyle={'display': 'block', 'marginBottom': '8px'},
-                                inputStyle={'marginRight': '8px'}
-                            ),
-                        ], style={
-                            'backgroundColor': '#f8f9fa',
-                            'padding': '15px',
-                            'borderRadius': '5px',
-                            'border': '1px solid #ddd',
-                            'margin': '0 auto',
-                            'width': '90%'
-                        }),
+                        html.Div(id='mbc-measure-container', style={'display': 'none'}, children=[
+                            html.Label("Wrapper Measure", style={'fontWeight': '500', 'marginBottom': '10px', 'display': 'block', 'textAlign': 'center'}),
+                            html.Div([
+                                dcc.RadioItems(
+                                    id='mbc-measure-radio',
+                                    options=[
+                                        {'label': ' Global accuracy', 'value': 'global'},
+                                        {'label': ' Average accuracy', 'value': 'average'},
+                                    ],
+                                    value='global',
+                                    labelStyle={'display': 'block', 'marginBottom': '8px'},
+                                    inputStyle={'marginRight': '8px'}
+                                ),
+                            ], style={
+                                'backgroundColor': '#f8f9fa',
+                                'padding': '15px',
+                                'borderRadius': '5px',
+                                'border': '1px solid #ddd',
+                                'margin': '0 auto',
+                                'width': '90%'
+                            }),
+                        ])
                     ], md=6),
                 ], style={'marginTop': '10px'}),
                 dbc.Row([
@@ -689,13 +691,20 @@ app.layout = html.Div([
             dbc.PopoverBody(
                 [
                     html.P("Configure the MBC learning algorithm:"),
-                    html.P([html.Strong("Approach:"), " Filter uses BIC score, Wrapper uses classification accuracy"]),
-                    html.P([html.Strong("Wrapper Measure:"), " Global (overall accuracy) or Average (per-class accuracy)"]),
-                    html.P([html.Strong("Discretization:"), " Method to convert numeric features to categories"]),
+                    html.P([html.Strong("Approach:")]),
+                    html.Ul([
+                        html.Li([html.Strong("Filter:"), " Uses BIC score (Bayesian Information Criterion) to learn structure. Split: 80/20 (train/test)"]),
+                        html.Li([html.Strong("Wrapper:"), " Uses classification accuracy on validation set to optimize structure. Split: 60/20/20 (train/val/test)"]),
+                    ], style={'fontSize': '13px', 'marginBottom': '10px'}),
+                    html.P([html.Strong("Wrapper Measure:"), " Global (exact match across all classes) or Average (macro-average per class)"]),
+                    html.P([html.Strong("Discretization:"), " Method to convert numeric features to discrete categories (3 bins)"]),
                     html.Hr(),
-                    html.Small([html.I(className="fa fa-info-circle me-1"), "Note: MBC uses an 80/20 train/validation split internally"], className="text-muted"),
+                    html.Small([
+                        html.I(className="fa fa-shield me-1", style={'color': '#28a745'}), 
+                        "Hold-out validation with fixed seed (123) ensures reproducible & unbiased evaluation"
+                    ], className="text-success"),
                 ],
-                style={"backgroundColor": "#ffffff", "borderRadius": "0 0 0.25rem 0.25rem", "maxWidth": "350px"}
+                style={"backgroundColor": "#ffffff", "borderRadius": "0 0 0.25rem 0.25rem", "maxWidth": "420px"}
             ),
         ],
         id="help-popover-mbc-options",
@@ -1089,6 +1098,18 @@ def toggle_help_options(n, is_open):
         return not is_open
     return is_open
 
+# Callback to show/hide Wrapper Measure selector based on approach
+@app.callback(
+    Output('mbc-measure-container', 'style'),
+    Input('mbc-approach-radio', 'value')
+)
+def toggle_measure_visibility(approach):
+    """Show Wrapper Measure selector only when Wrapper approach is selected"""
+    if approach == 'wrapper':
+        return {'display': 'block'}
+    else:
+        return {'display': 'none'}
+
 # 5. Run MBC model training and evaluation
 @app.callback(
     Output('mbc-results', 'children'),
@@ -1212,24 +1233,47 @@ def run_mbc(n_clicks, dataset_store, classes, features, approach, measure, train
             }
         ''')
 
-    # Train/validation split
-    ro.globalenv['train_ratio'] = train_split / 100.0
+    # HOLD-OUT SPLIT: Train/Validation/Test (60/20/20 for wrapper, 80/20 for filter)
+    # This ensures no data leakage and scientifically valid evaluation
     ro.r('''
         set.seed(123)  # for reproducibility
         N <- nrow(df_all)
-        train_indices <- sample(N, floor(N * train_ratio))
-        train_df <- df_all[train_indices, c(classes, features), drop=FALSE]
-        val_df   <- df_all[-train_indices, c(classes, features), drop=FALSE]
     ''')
-
+    
     # Train MBC model using selected approach
     try:
         if approach == 'filter':
+            # FILTER APPROACH: Use simple 80/20 split (train/test)
+            # Filter doesn't need validation set since it uses BIC score (internal criterion)
+            ro.r('''
+                train_size <- floor(N * 0.8)
+                train_indices <- sample(N, train_size)
+                train_df <- df_all[train_indices, c(classes, features), drop=FALSE]
+                test_df  <- df_all[-train_indices, c(classes, features), drop=FALSE]
+            ''')
             ro.r('MBC_model <- learn_MBC(train_df, classes, features)')
         else:  # wrapper approach
-            # Use wrapper with chosen measure (global or average accuracy)
+            # WRAPPER APPROACH: Use 60/20/20 split (train/validation/test)
+            # Validation set is used to optimize structure, test set for final evaluation
+            # Ensure measure has a default value if None
+            if measure is None:
+                measure = 'global'
             ro.globalenv['measure'] = measure
-            ro.r('MBC_model <- learn_MBC_wrapper2(train_df, val_df, classes, features, measure = measure, verbose = FALSE)')
+            ro.r('''
+                # First split: 80% for train+val, 20% for test
+                test_size <- floor(N * 0.2)
+                test_indices <- sample(N, test_size)
+                train_val_df <- df_all[-test_indices, c(classes, features), drop=FALSE]
+                test_df <- df_all[test_indices, c(classes, features), drop=FALSE]
+                
+                # Second split: from train_val, 75% train (=60% of total), 25% val (=20% of total)
+                N_train_val <- nrow(train_val_df)
+                val_size <- floor(N_train_val * 0.25)
+                val_indices <- sample(N_train_val, val_size)
+                val_df <- train_val_df[val_indices, ]
+                train_df <- train_val_df[-val_indices, ]
+            ''')
+            ro.r('MBC_model <- learn_MBC_wrapper2(train_df, val_df, classes, features, measure = measure, verbose = TRUE)')
     except Exception as e:
         return html.Div(f"Error during MBC training: {e}", style={'color': 'red'}), None, False, None, {
             "message": f"Error during MBC training: {str(e)}",
@@ -1273,13 +1317,22 @@ def run_mbc(n_clicks, dataset_store, classes, features, approach, measure, train
         structure_str = f"(Could not retrieve network structure: {str(e)})"
         network_data = None
 
-    # Make predictions on validation set
+    # Make predictions on TEST set (independent, never used during training/validation)
+    # This ensures unbiased performance estimation
     try:
-        ro.r('pred_df <- predict_MBC_dataset_veryfast(MBC_model, val_df, classes, features)')
-        perf = ro.r('test_multidimensional(val_df, pred_df, classes)')
+        ro.r('pred_df <- predict_MBC_dataset_veryfast(MBC_model, test_df, classes, features)')
+        perf = ro.r('test_multidimensional(test_df, pred_df, classes)')
         global_acc = float(perf.rx2('global')[0])
         avg_acc = float(perf.rx2('average')[0])
         per_class_acc = list(perf.rx2('per_class'))
+        
+        # Get dataset split sizes for reporting
+        train_size = int(ro.r('nrow(train_df)')[0])
+        test_size = int(ro.r('nrow(test_df)')[0])
+        if approach == 'wrapper':
+            val_size = int(ro.r('nrow(val_df)')[0])
+        else:
+            val_size = 0
     except Exception as e:
         return html.Div(f"Error during prediction/evaluation: {e}", style={'color': 'red'}), None, False, None, {
             "message": f"Error during prediction/evaluation: {str(e)}",
@@ -1332,9 +1385,25 @@ def run_mbc(n_clicks, dataset_store, classes, features, approach, measure, train
         
         html.Hr(style={'margin': '20px 0'}),
         
+        # Dataset Split Information
+        html.Div([
+            html.H5("Dataset Split (Hold-out)", style={'textAlign': 'center', 'color': '#6c757d', 'marginBottom': '10px', 'fontSize': '16px'}),
+            html.Div([
+                html.Span(f"Train: {train_size} samples", style={'marginRight': '20px', 'fontWeight': '500'}),
+                html.Span(f"Validation: {val_size} samples", style={'marginRight': '20px', 'fontWeight': '500'}) if val_size > 0 else html.Span(),
+                html.Span(f"Test: {test_size} samples", style={'fontWeight': '500'}),
+            ], style={'textAlign': 'center', 'fontSize': '14px', 'color': '#666', 'marginBottom': '10px'}),
+            html.Small([
+                html.I(className="fa fa-info-circle", style={'marginRight': '5px'}),
+                f"{'60/20/20 split (train/val/test)' if val_size > 0 else '80/20 split (train/test)'} with fixed seed for reproducibility"
+            ], style={'display': 'block', 'textAlign': 'center', 'color': '#6c757d', 'fontStyle': 'italic'})
+        ], style={'backgroundColor': '#f8f9fa', 'padding': '15px', 'borderRadius': '5px', 'marginBottom': '20px'}),
+        
+        html.Hr(style={'margin': '20px 0'}),
+        
         # Performance Metrics Section
         html.Div([
-            html.H5("Validation Performance", style={'textAlign': 'center', 'color': '#00A2E1', 'marginBottom': '15px'}),
+            html.H5("Test Set Performance", style={'textAlign': 'center', 'color': '#00A2E1', 'marginBottom': '15px'}),
             
             # Overall metrics
             html.Div([
