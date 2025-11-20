@@ -101,7 +101,7 @@ learn_MBC <- function(training_set, classes, features) {
 # We start from the empty graph and add the single arc (respecting acyclicity
 # and the feature→class blacklist) that yields the largest ΔJ > 0.
 learn_MBC_wrapper2 <- function(training_set, validation_set, classes, features,
-                               measure = "global", verbose = FALSE) {
+                               measure = "global", verbose = TRUE) {
   MBC_best <- empty.graph(nodes = c(classes, features))
   MBC_fit  <- bn.fit(MBC_best, training_set, method = "bayes", iss = 1)
 
@@ -110,6 +110,15 @@ learn_MBC_wrapper2 <- function(training_set, validation_set, classes, features,
   names(joint_levels) <- classes
   class_combinations <- expand.grid(joint_levels)  # I × d
   I <- nrow(class_combinations)
+  
+  if (verbose) {
+    message(sprintf("=== MBC Wrapper Training Started ==="))
+    message(sprintf("Classes: %d | Features: %d | Nodes: %d", 
+                    length(classes), length(features), length(classes) + length(features)))
+    message(sprintf("Training set: %d samples | Validation set: %d samples",
+                    nrow(training_set), nrow(validation_set)))
+    message(sprintf("Measure: %s", measure))
+  }
 
   # helper: compute validation accuracy for a fitted model by MPE on Ω
   get_validation_accuracy <- function(model) {
@@ -131,26 +140,75 @@ learn_MBC_wrapper2 <- function(training_set, validation_set, classes, features,
   }
 
   best_perf <- get_validation_accuracy(MBC_fit)
+  
+  if (verbose) {
+    message(sprintf("Initial accuracy: %.4f", best_perf))
+  }
+  
   improved <- TRUE
+  iteration <- 0
   while (improved) {
+    iteration <- iteration + 1
     improved <- FALSE
     best_arc <- NULL
     candidate_arcs <- MBC_possible_arcs(classes, features)
     current_arcs <- if (!is.null(arcs(MBC_best))) arcs(MBC_best) else matrix(nrow = 0, ncol = 2)
     best_candidate_perf <- best_perf
+    
+    if (verbose) {
+      message(sprintf("\n--- Iteration %d ---", iteration))
+      message(sprintf("Candidate arcs to evaluate: %d | Current arcs: %d",
+                      nrow(candidate_arcs), ifelse(is.null(nrow(current_arcs)), 0, nrow(current_arcs))))
+    }
 
-    for (k in 1:nrow(candidate_arcs)) {
+    n_candidates <- nrow(candidate_arcs)
+    arcs_evaluated <- 0
+    arcs_skipped_present <- 0
+    arcs_skipped_cyclic <- 0
+    arcs_skipped_pruning <- 0
+    
+    for (k in 1:n_candidates) {
       arc <- candidate_arcs[k, ]
+
+      # Progress indicator every 500 arcs
+      if (verbose && k %% 500 == 0) {
+        message(sprintf("  Progress: %d/%d arcs checked (%.1f%%)", 
+                        k, n_candidates, (k/n_candidates)*100))
+      }
+      
+      # CRITICAL PRUNING: Only evaluate feature→feature arcs if "to" is in Markov Blanket of classes
+      # This dramatically reduces search space and focuses on relevant arcs
+      if (arc["from"] %in% features) {
+        interest <- FALSE
+        for (j in 1:length(classes)) {
+          if (arc["to"] %in% MBC_best$nodes[[classes[[j]]]]$children) {
+            interest <- TRUE
+            break
+          }
+        }
+        if (!interest) {
+          arcs_skipped_pruning <- arcs_skipped_pruning + 1
+          next  # Skip feature→feature arcs not connected to classes
+        }
+      }
 
       # skip if arc already present
       if (nrow(current_arcs) > 0 &&
-          any(apply(current_arcs, 1, function(x) all(x == arc)))) next
+          any(apply(current_arcs, 1, function(x) all(x == arc)))) {
+        arcs_skipped_present <- arcs_skipped_present + 1
+        next
+      }
 
       # check acyclicity
-      MBC_temp <- set.arc(MBC_best, from = arc["from"], to = arc["to"], check.cycles = FALSE)
-      if (!acyclic(MBC_temp)) next
+      # Use as.character and unname to ensure clean string values
+      MBC_temp <- set.arc(MBC_best, from = as.character(arc["from"]), to = as.character(arc["to"]), check.cycles = FALSE)
+      if (!acyclic(MBC_temp)) {
+        arcs_skipped_cyclic <- arcs_skipped_cyclic + 1
+        next
+      }
 
       # fit and evaluate
+      arcs_evaluated <- arcs_evaluated + 1
       MBC_temp_fit <- bn.fit(MBC_temp, training_set, method = "bayes", iss = 1)
       perf_val <- get_validation_accuracy(MBC_temp_fit)
 
@@ -158,20 +216,45 @@ learn_MBC_wrapper2 <- function(training_set, validation_set, classes, features,
       if (perf_val > best_candidate_perf + 1e-10) {
         best_candidate_perf <- perf_val
         best_arc <- arc
+        if (verbose) {
+          message(sprintf("  ✓ New best: %s -> %s | acc=%.4f (Δ=+%.4f)", 
+                          arc["from"], arc["to"], perf_val, perf_val - best_perf))
+        }
       }
+    }
+    
+    if (verbose) {
+      message(sprintf("  Evaluated: %d | Skipped - pruning: %d | present: %d | cyclic: %d", 
+                      arcs_evaluated, arcs_skipped_pruning, arcs_skipped_present, arcs_skipped_cyclic))
     }
 
     if (!is.null(best_arc)) {
-      MBC_best <- set.arc(MBC_best, from = best_arc["from"], to = best_arc["to"])
+      # Use as.character to ensure clean string values
+      MBC_best <- set.arc(MBC_best, from = as.character(best_arc["from"]), to = as.character(best_arc["to"]))
       # normalize model string to keep a clean DAG (removes duplicates)
       MBC_best <- model2network(modelstring(MBC_best))
       MBC_fit  <- bn.fit(MBC_best, training_set, method = "bayes", iss = 1)
       best_perf <- best_candidate_perf
       improved <- TRUE
-      if (verbose) message(sprintf("Added arc %s -> %s | %s-acc=%.4f",
-                                   best_arc["from"], best_arc["to"], measure, best_perf))
+      if (verbose) {
+        message(sprintf("✓ ADDED ARC: %s -> %s | %s-acc=%.4f",
+                        best_arc["from"], best_arc["to"], measure, best_perf))
+      }
+    } else {
+      if (verbose) {
+        message(sprintf("✗ No improvement found. Stopping."))
+      }
     }
   }
+  
+  if (verbose) {
+    n_arcs_final <- ifelse(is.null(arcs(MBC_best)), 0, nrow(arcs(MBC_best)))
+    message(sprintf("\n=== Training Complete ==="))
+    message(sprintf("Final accuracy: %.4f", best_perf))
+    message(sprintf("Total arcs in network: %d", n_arcs_final))
+    message(sprintf("Iterations: %d", iteration))
+  }
+  
   return(MBC_fit)
 }
 
